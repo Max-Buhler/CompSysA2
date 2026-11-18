@@ -1,4 +1,4 @@
-# CompSys A3 solution README
+# CompSys A2 solution README
 This system is considerably more complicated to run and understand than 
 previous assignment handouts. In order to properly test your system you will 
 need to start different peers in varying orders and states. Multiple peers will
