@@ -107,6 +107,8 @@ void* client_thread()
     send_message function.
     */
 
+    send_message(peer_address, COMMAND_REGISTER, NULL, 0);
+
     // You should never see this printed in your finished implementation
     printf("Client thread done\n");
 
