@@ -62,6 +62,15 @@ void send_message(Address_t peer_address, int command,
     3: Handing the response to the register message
     Rather than closing immediately we should probably handle a response.
     */
+    
+    char* reply_header[REPLY_HEADER_LEN];
+    compsys_helper_readn(peer_socket, reply_header, REPLY_HEADER_LEN);
+    
+    uint32_t reply_length = ntohl(*(uint32_t*)&reply_header[0]);
+    uint32_t reply_status = ntohl(*(uint32_t*)&reply_header[4]);
+
+    // printf("%d\n", reply_length);
+    // printf(reply_status);
 
     close(peer_socket);
 }
