@@ -214,6 +214,8 @@ int main(int argc, char **argv)
     After determining our salt but before saving our address we should probably
     work out what our signature should be. 
     */
+    get_signature(password, strlen(password), user_salt, (hashdata_t*)(my_address->signature));
+    // todo: maybe error handle if this fails? if it fails, it's likely because of the malloc failing inside get_signature
 
     // Start our record of the network by recording our own address. Make sure
     // any time we update this array we also update the peer_count.

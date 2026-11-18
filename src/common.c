@@ -122,3 +122,28 @@ int starts_with(const char *a, const char *b)
   if(strncmp(a, b, strlen(b)) == 0) return 1;
   return 0;
 }
+
+/*
+ * takes password (and its length) and a salt, and sets the hashdata to the hashed password+salt string
+ */
+void get_signature(char* password, int password_len, char* salt, hashdata_t* hash) {
+  // create buffer for password + salt 
+  int bufferSize = password_len + SALT_LEN + 1;
+  char *buffer = malloc(bufferSize);
+  if (buffer == NULL) {
+    return;
+  }
+
+  // combine both strings in the buffer
+  memcpy(buffer, password, password_len);
+  memcpy(buffer + password_len, salt, SALT_LEN);
+
+  // Ensure the buffer is null-terminated
+  buffer[bufferSize - 1] = '\0';
+
+  // hash the buffer
+  get_data_sha(buffer, &hash, bufferSize - 1, SHA256_HASH_SIZE);
+
+  // free memory
+  free(buffer);
+};

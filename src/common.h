@@ -62,3 +62,6 @@ int is_valid_ip(char *ip_string);
 int is_valid_port_str(char *port_string);
 int is_valid_port(int port);
 int starts_with(const char *a, const char *b);
+
+// own functions
+void get_signature(char* password, int password_len, char* salt, hashdata_t* hash);
