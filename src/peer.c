@@ -145,7 +145,7 @@ void send_message(Address_t peer_address, int command,
         int newPeersCount = reply_length / PEER_ADDR_LEN;
         printf("New peers count: %d\n", newPeersCount);
 
-        // we could optimize this to O(n) instead of O(n^2), by checking all new peers for duplicates and comparing to network without inserting, and then inserting at last. however, I choose to do it simpler.
+        // we could optimize this to O(n) instead of O(m*n), by checking all new peers for duplicates and comparing to network without inserting, and then inserting at last. however, I choose to do it simpler.
         for (int i = 0; i<newPeersCount; i++) {
             // load peer data as address
             Address_t pa;
