@@ -266,6 +266,22 @@ void* server_thread()
     as a simple skeleton function you could use to process your requests in.
     */
 
+    // ring buffer idea:
+    pthread_t threads[256]; //literally just chose a random number
+    int li = 0;
+    int ui = 0;
+
+    while (1) {
+        // check if new request has come (continue if not)
+
+        // load the args from the request
+        // args = 
+
+        // spawn thread if it came
+        // tid = (some ring buffer magic here)
+        // pthread_create(&tid, NULL, handle_server_request_thread, &args);
+    } 
+
     // You should never see this printed in your finished implementation
     printf("Server thread done\n");
 
