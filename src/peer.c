@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <string.h>
 #include <time.h>
+#include <stdbool.h>
 
 #ifdef __APPLE__
 #include "./endian.h"
@@ -21,6 +22,22 @@ Address_t *my_address;
 
 Address_t** network = NULL;
 uint32_t peer_count = 0;
+
+/* 
+    * checks if an address already exists in the network
+    * only compares ip:port
+*/
+bool addressExistsInNetwork(Address_t *pa) {
+    for (int j = 0; j < peer_count; j++) {
+        bool sameIp = memcmp(network[j]->ip, pa->ip, IP_LEN);
+        bool samePort = network[j]->port == pa->port;
+
+        if (sameIp && samePort) {
+            return true;
+        }
+    }
+    return false;
+}
 
 /*
  * Send a request message to another peer on the network. Unless this is 
@@ -63,15 +80,93 @@ void send_message(Address_t peer_address, int command,
     Rather than closing immediately we should probably handle a response.
     */
     
-    char* reply_header[REPLY_HEADER_LEN];
+    uint8_t reply_header[REPLY_HEADER_LEN];
     compsys_helper_readn(peer_socket, reply_header, REPLY_HEADER_LEN);
     
     uint32_t reply_length = ntohl(*(uint32_t*)&reply_header[0]);
     uint32_t reply_status = ntohl(*(uint32_t*)&reply_header[4]);
 
-    // printf("%d\n", reply_length);
-    // printf(reply_status);
+    // guard rails (<0 is unneccessary, as its a uint)
+    if (reply_length < 0 || reply_length > MAX_MSG_LEN-REPLY_HEADER_LEN) {
+        return;
+    }
 
+    // get total response
+    char *responseBodyBuffer = malloc(reply_length);
+    if (!responseBodyBuffer) {
+        return;
+    }
+
+    // load/read total response body
+    compsys_helper_readn(peer_socket, responseBodyBuffer, reply_length);
+
+    // save block hash (4+4+4+4=16)
+    hashdata_t sentBlockHash;
+    memcpy(sentBlockHash, &reply_header[16], SHA256_HASH_SIZE);
+    
+    // recalculate block hash
+    hashdata_t calculatedBlockHash;
+    get_data_sha(responseBodyBuffer, calculatedBlockHash, reply_length, SHA256_HASH_SIZE);
+    
+    // throw error if mismatch
+    if (memcmp(sentBlockHash, calculatedBlockHash, SHA256_HASH_SIZE) != 0) {
+        // TODO: Maybe actually throw error?
+        printf("wrong blockhash. disregarding.\n");
+        return;
+    }
+    
+    // TODO: Baseline to calculate total hash, as it is the hash of all blocks, but we only can load one for now.
+    // -> It was built on the idea, that the whole reply was the "total hash", but that is wrong. So changes are necessary.
+    // save total hash (4+4+4+4+32=48)
+    hashdata_t sentTotalHash;
+    memcpy(sentTotalHash, &reply_header[48], SHA256_HASH_SIZE);
+    // // recalculate total hash
+    // char *totalResponse = malloc(REPLY_HEADER_LEN+reply_length); // todo: needs to be freed somewhere
+    // if (!totalResponse) {
+    //     return;
+    // }
+    // memcpy(totalResponse, reply_header, REPLY_HEADER_LEN); //first write response header
+    // memcpy(&totalResponse[REPLY_HEADER_LEN], responseBodyBuffer, reply_length); //then write response body
+
+    // hashdata_t calculatedTotalHash;
+    // get_data_sha(totalResponse, calculatedTotalHash, reply_length+REPLY_HEADER_LEN, SHA256_HASH_SIZE);
+    
+    // // throw error if mismatch
+    // if (memcmp(sentTotalHash, calculatedTotalHash, SHA256_HASH_SIZE) != 0) {
+    //     // TODO: Maybe actually throw error?
+    //     printf("wrong total hash. disregarding.\n");
+    //     return;
+    // }
+
+    printf("reply length: %d\n", reply_length);
+    printf("reply status: %d\n", reply_status);
+
+    if (reply_status == 1) {
+        int newPeersCount = reply_length / PEER_ADDR_LEN;
+        printf("New peers count: %d\n", newPeersCount);
+
+        // we could optimize this to O(n) instead of O(n^2), by checking all new peers for duplicates and comparing to network without inserting, and then inserting at last. however, I choose to do it simpler.
+        for (int i = 0; i<newPeersCount; i++) {
+            // load peer data as address
+            Address_t pa;
+            memcpy(&pa, responseBodyBuffer+i*PEER_ADDR_LEN, PEER_ADDR_LEN);
+    
+            // ignore if they already exist in "network"
+            if (addressExistsInNetwork(&pa)) {
+                printf("address #%d was not added as it already existed.\n", i);
+                continue;
+            }
+            // add to "network"
+            network[peer_count] = &pa;
+            
+            // update "peer_count"
+            peer_count+=1;
+        }
+    }
+
+    printf("peer_count is %d\n", peer_count);
+
+    free(responseBodyBuffer); //this might not be the best place for this to be freed.
     close(peer_socket);
 }
 
