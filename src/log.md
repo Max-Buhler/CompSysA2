@@ -8,6 +8,7 @@
 - variable name change sentBlockHash -> receivedBlockHash
 - created storePeer function
 - created network_record struct, which includes a mutex
+- created print_network_record function
 
 ## Memory Allocations
 
