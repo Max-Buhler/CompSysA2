@@ -120,7 +120,7 @@ void send_message(Address_t peer_address, int command, char *request_body,
   3: Handing the response to the register message
   Rather than closing immediately we should probably handle a response.
   */
-  struct ReplyHeader reply_header;
+  ReplyHeader_t reply_header;
   compsys_helper_readn(peer_socket, &reply_header, REPLY_HEADER_LEN);
 
   reply_header.length = ntohl(reply_header.length);
@@ -131,6 +131,11 @@ void send_message(Address_t peer_address, int command, char *request_body,
   // guard rails (<0 is unneccessary, as its a uint (Max removed it))
   if (reply_header.length > MAX_MSG_LEN - REPLY_HEADER_LEN) {
     printf("incomming reply length greater than allowed\n");
+    return;
+  }
+
+  if (reply_header.status != STATUS_OK) {
+    printf("error! received status: %d\n", reply_header.status);
     return;
   }
 
@@ -177,9 +182,8 @@ void send_message(Address_t peer_address, int command, char *request_body,
   // }
 
   printf("reply length: %d\n", reply_header.length);
-  printf("reply status: %d\n", reply_header.status);
 
-  if (reply_header.status == 1) {
+  if (command == COMMAND_REGISTER) {
     int newPeersCount = reply_header.length / PEER_ADDR_LEN;
     printf("Incomming peers: %d\n", newPeersCount);
 
@@ -196,6 +200,14 @@ void send_message(Address_t peer_address, int command, char *request_body,
       memcpy(pa, responseBodyBuffer + i * PEER_ADDR_LEN, PEER_ADDR_LEN);
       pa->port = ntohl(pa->port);
 
+      if (is_valid_ip(pa->ip) != 1) {
+        printf("Peer does not have a valid IP: %s\n", request_header.ip);
+      }
+
+      if (is_valid_port(pa->port) != 1) {
+        printf("Peer does not have a valid port: %d\n", request_header.port);
+      }
+
       pthread_mutex_lock(&networkRecord.mutex);
       storePeer(pa);
       pthread_mutex_unlock(&networkRecord.mutex);
@@ -203,8 +215,6 @@ void send_message(Address_t peer_address, int command, char *request_body,
       // ignore if they already exist in "network"
     }
   }
-
-  printf("peer_count is %d\n", networkRecord.peer_count);
 
   close(peer_socket);
 }
@@ -262,6 +272,9 @@ void *client_thread() {
  * Handler for all server requests. This will call the relevent function based
  * on the parsed command code
  */
+
+void handle_register_request() { return; }
+
 void *handle_server_request_thread(void *vargp) {
   char buf[MAXLINE];
   compsys_helper_state_t state;
@@ -275,8 +288,35 @@ void *handle_server_request_thread(void *vargp) {
   Here we should probable actually read in some input data.
   */
 
-  uint8_t request_header[REQUEST_HEADER_LEN];
-  compsys_helper_readn(connfd, request_header, REPLY_HEADER_LEN);
+  RequestHeader_t request_header;
+  compsys_helper_readn(connfd, &request_header, REQUEST_HEADER_LEN);
+
+  request_header.port = ntohl(request_header.port);
+  request_header.command = ntohl(request_header.command);
+  request_header.length = ntohl(request_header.length);
+
+  if (request_header.length > MAX_MSG_LEN - REPLY_HEADER_LEN) {
+    printf("incomming reply length greater than allowed\n");
+    return NULL;
+  }
+
+  if (is_valid_ip(request_header.ip) != 1) {
+    printf("Not a valid IP: %s\n", request_header.ip);
+  }
+
+  if (is_valid_port(request_header.port) != 1) {
+    printf("Not a valid port: %d\n", request_header.port);
+  }
+
+  if (request_header.command > 3) {
+    printf("Not a valid command: %d\n", request_header.command);
+  }
+
+  char requestBodyBuffer[request_header.length];
+  compsys_helper_readn(connfd, requestBodyBuffer, request_header.length);
+
+  printf("Received request from %s:%d\n", request_header.ip,
+         request_header.port);
 
   close(connfd);
   return NULL;
