@@ -309,21 +309,16 @@ void *server_thread() {
   connections. The function 'handle_server_request_thread' has been provided
   as a simple skeleton function you could use to process your requests in.
   */
+  // Code taken from lecture 26.10.26 (multithreaded server)
 
-  // ring buffer idea:
-  pthread_t threads[256]; // literally just chose a random number
-  int li = 0;
-  int ui = 0;
+  // Setup variables for handdeling threads:
+  int *connfdp;
+  pthread_t tid;
 
   while (1) {
-    // check if new request has come (continue if not)
-
-    // load the args from the request
-    // args =
-
-    // spawn thread if it came
-    // tid = (some ring buffer magic here)
-    // pthread_create(&tid, NULL, handle_server_request_thread, &args);
+    connfdp = malloc(sizeof(int));
+    *connfdp = accept(listenfd, NULL, NULL);
+    pthread_create(&tid, NULL, handle_server_request_thread, connfdp);
   }
 
   // You should never see this printed in your finished implementation
