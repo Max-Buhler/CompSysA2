@@ -19,9 +19,18 @@
 - fixed bug in printing function, printing the signature including the salt.
 - fixed bug in addressExistsInNetwork: memcmp returns 0 if equal.
 - completed Step 6, server now includes registerer in network
+- We no longer save our own address in the network array, as it is not the
+  network signature.
+- Completed Step 7
+- Reworked registering, such that registering when client is already in network
+  still works.
 
 ## Memory Allocations
 
 - network[] + every address in network[]
 - new_network
 - connfd when accepting clients
+
+## Open Sockets (Incompet)
+
+-
