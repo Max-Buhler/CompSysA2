@@ -273,27 +273,55 @@ void *client_thread() {
   return NULL;
 }
 
-/*
- * Handler for all server requests. This will call the relevent function based
- * on the parsed command code
- */
+void populate_network_address(Address_t *na, char *ip, uint32_t port,
+                              hashdata_t signature) {
+
+  strncpy(na->ip, ip, IP_LEN);
+  na->port = port;
+  generate_random_salt(na->salt);
+  get_signature((char *)signature, SHA256_HASH_SIZE, na->salt, &na->signature);
+}
 
 void handle_register_request(RequestHeader_t rh) {
   // Constructing connecting client address:
   Address_t client_address;
-  strncpy(client_address.ip, rh.ip, IP_LEN);
-  client_address.port = rh.port;
-  generate_random_salt(client_address.salt);
-  get_signature((char *)rh.signature, SHA256_HASH_SIZE, client_address.salt,
-                &client_address.signature);
-
-  printf("Recieved register request from:\n");
+  populate_network_address(&client_address, rh.ip, rh.port, rh.signature);
   print_address(&client_address);
+
   pthread_mutex_lock(&networkRecord.mutex);
   storePeer(&client_address);
   print_network_record();
   pthread_mutex_unlock(&networkRecord.mutex);
+  // Storing myself in the network array with a network salt.
+  // TODO: currently we generate the same salt in both cases, because generator
+  // uses current time as seed
+  if (networkRecord.peer_count == 1) {
+    Address_t own_network_address;
+    populate_network_address(&own_network_address, my_address->ip,
+                             my_address->port, my_address->signature);
+    pthread_mutex_lock(&networkRecord.mutex);
+    storePeer(&own_network_address);
+    print_network_record();
+    pthread_mutex_unlock(&networkRecord.mutex);
+  }
+  char responseBodyBuffer[sizeof(Address_t) * networkRecord.peer_count];
+  for (uint32_t i = 0; i < networkRecord.peer_count; i++) {
+    Address_t network_order_address;
+    strncpy(network_order_address.ip, networkRecord.network[i]->ip, IP_LEN);
+    network_order_address.port = htonl(networkRecord.network[i]->port);
+    memcpy(network_order_address.signature, networkRecord.network[i]->signature,
+           SHA256_HASH_SIZE);
+    memcpy(network_order_address.salt, networkRecord.network[i]->salt,
+           SALT_LEN);
+    memcpy(responseBodyBuffer + sizeof(Address_t) * i, &network_order_address,
+           sizeof(Address_t));
+  }
 }
+
+/*
+ * Handler for all server requests. This will call the relevent function based
+ * on the parsed command code
+ */
 
 void *handle_server_request_thread(void *vargp) {
   char buf[MAXLINE];
@@ -435,11 +463,10 @@ int main(int argc, char **argv) {
   // todo: maybe error handle if this fails? if it fails, it's likely because of
   // the malloc failing inside get_signature
 
-  // Start our record of the network by recording our own address. Make sure
+  // Start our record of the by adding an empty spot for the address. Make sure
   // any time we update this array we also update the peer_count.
   networkRecord.network = malloc(sizeof(Address_t *));
-  networkRecord.network[0] = my_address;
-  networkRecord.peer_count = 1;
+  networkRecord.peer_count = 0;
   networkRecord.max_size = 1;
   pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
   networkRecord.mutex = mutex;
