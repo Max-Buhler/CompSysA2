@@ -24,6 +24,9 @@
 - Completed Step 7
 - Reworked registering, such that registering when client is already in network
   still works.
+- fixed bug, where we used network byte ordering to index a memcpy
+- Encapsulated memory allocation into the storePeer function
+- Completed Step 8 + 9
 
 ## Memory Allocations
 

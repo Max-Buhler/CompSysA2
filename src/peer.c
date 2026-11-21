@@ -84,7 +84,9 @@ int storePeer(Address_t *pa) {
   // TODO: decreasing size
   //
   // add to "network"
-  networkRecord.network[networkRecord.peer_count] = pa;
+  Address_t *network_entry = malloc(sizeof(Address_t));
+  memcpy(network_entry, pa, sizeof(Address_t));
+  networkRecord.network[networkRecord.peer_count] = network_entry;
 
   // update "peer_count"
   networkRecord.peer_count += 1;
@@ -206,24 +208,20 @@ void send_message(Address_t peer_address, int command, char *request_body,
     // inserting at last. however, I choose to do it simpler.
     for (int i = 0; i < newPeersCount; i++) {
       // load peer data as address
-      Address_t *pa = malloc(sizeof(Address_t));
-      if (!pa) {
-        printf("malloc of peer address failed\n");
-        return;
-      }
-      memcpy(pa, responseBodyBuffer + i * PEER_ADDR_LEN, PEER_ADDR_LEN);
-      pa->port = ntohl(pa->port);
+      Address_t pa;
+      memcpy(&pa, responseBodyBuffer + i * PEER_ADDR_LEN, PEER_ADDR_LEN);
+      pa.port = ntohl(pa.port);
 
-      if (is_valid_ip(pa->ip) != 1) {
+      if (is_valid_ip(pa.ip) != 1) {
         printf("Peer does not have a valid IP: %s\n", request_header.ip);
       }
 
-      if (is_valid_port(pa->port) != 1) {
+      if (is_valid_port(pa.port) != 1) {
         printf("Peer does not have a valid port: %d\n", request_header.port);
       }
 
       pthread_mutex_lock(&networkRecord.mutex);
-      storePeer(pa);
+      storePeer(&pa);
       pthread_mutex_unlock(&networkRecord.mutex);
 
       // ignore if they already exist in "network"
@@ -318,11 +316,20 @@ void populate_network_address(Address_t *na, char *ip, uint32_t port,
 
 void inform_network(Address_t joiner) {
   for (uint32_t i = 0; i < networkRecord.peer_count; i++) {
-    if (networkRecord.network[i]->signature != my_address->signature &&
-        networkRecord.network[i]->signature != joiner.signature) {
-
+    // comparing joiner and my ip + port to avoid sending inform to them
+    int joiner_me =
+        (memcmp(networkRecord.network[i], my_address, IP_LEN + PORT_LEN) == 0);
+    int joiner_themselves =
+        (memcmp(networkRecord.network[i], &joiner, IP_LEN + PORT_LEN) == 0);
+    if (!joiner_me && !joiner_themselves) {
+      // body
+      Address_t no_joiner;
+      memcpy(&no_joiner, &joiner, sizeof(Address_t));
+      no_joiner.port = htonl(no_joiner.port);
       char body[sizeof(Address_t)];
-      memcpy(body, &joiner, sizeof(Address_t));
+      memcpy(body, &no_joiner, sizeof(Address_t));
+
+      // recipient
       Address_t recipient;
       memcpy(&recipient, networkRecord.network[i], sizeof(Address_t));
 
@@ -356,10 +363,7 @@ void handle_register_request(RequestHeader_t rh, int connfd) {
                sizeof(Address_t) * networkRecord.peer_count);
 
     // inform network of joiner
-    Address_t no_client_address;
-    memcpy(&no_client_address, &client_address, sizeof(Address_t));
-    no_client_address.port = htonl(no_client_address.port);
-    inform_network(no_client_address);
+    inform_network(client_address);
 
   } else if (res == 0) { // client already joined
     send_reply(connfd, STATUS_PEER_EXISTS, responseBodyBuffer,
@@ -372,6 +376,18 @@ void handle_register_request(RequestHeader_t rh, int connfd) {
  * Handler for all server requests. This will call the relevent function based
  * on the parsed command code
  */
+
+void handle_inform_request(char *body) {
+  Address_t joiner;
+  memcpy(&joiner, body, sizeof(Address_t));
+  joiner.port = ntohl(joiner.port);
+
+  pthread_mutex_lock(&networkRecord.mutex);
+  print_network_record();
+  storePeer(&joiner);
+  print_network_record();
+  pthread_mutex_unlock(&networkRecord.mutex);
+}
 
 void *handle_server_request_thread(void *vargp) {
   char buf[MAXLINE];
@@ -416,11 +432,20 @@ void *handle_server_request_thread(void *vargp) {
   char requestBodyBuffer[request_header.length];
   compsys_helper_readn(connfd, requestBodyBuffer, request_header.length);
 
-  printf("Received request from %s:%d\n", request_header.ip,
-         request_header.port);
+  printf("Received request from %s:%d to run command: %d\n", request_header.ip,
+         request_header.port, request_header.command);
 
   if (request_header.command == COMMAND_REGISTER) {
     handle_register_request(request_header, connfd);
+  }
+
+  if (request_header.command == COMMAND_INFORM) {
+    if (request_header.length != PEER_ADDR_LEN) {
+      printf("recieved inform request with bad length: %d",
+             request_header.length);
+      return NULL;
+    }
+    handle_inform_request(requestBodyBuffer);
   }
 
   close(connfd);
