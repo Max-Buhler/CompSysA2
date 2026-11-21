@@ -1,6 +1,5 @@
 #include <arpa/inet.h>
 #include <bits/pthreadtypes.h>
-#include <cstdint>
 #include <math.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -167,7 +166,8 @@ void send_message(Address_t peer_address, int command, char *request_body,
 
   // guard rails (<0 is unneccessary, as its a uint (Max removed it))
   if (reply_header.length > MAX_MSG_LEN - REPLY_HEADER_LEN) {
-    printf("incomming reply length greater than allowed\n");
+    printf("incomming reply length greater than allowed: %u\n",
+           reply_header.length);
     return;
   }
 
@@ -443,10 +443,15 @@ void send_error(int connfd, int status) {
   compsys_helper_writen(connfd, msg_buf, REPLY_HEADER_LEN);
 }
 
-void *handle_server_request_thread(void *vargp) {
-  char buf[MAXLINE];
-  compsys_helper_state_t state;
+void handle_retreive_request(int connfd, RequestHeader_t request_header,
+                             char *body) {
+  printf("file to retreive: %.*s\n", request_header.length, body);
+  if (body[0] == '/') {
+    printf("haha i got you hackerman\n");
+  }
+}
 
+void *handle_server_request_thread(void *vargp) {
   int connfd = *((int *)vargp);
   pthread_detach(pthread_self());
   free(vargp);
@@ -501,7 +506,7 @@ void *handle_server_request_thread(void *vargp) {
 
   if (request_header.command == COMMAND_INFORM) {
     if (request_header.length != PEER_ADDR_LEN) {
-      printf("recieved inform request with bad length: %d",
+      printf("recieved inform request with bad length: %d\n",
              request_header.length);
       return NULL;
     }
@@ -509,6 +514,7 @@ void *handle_server_request_thread(void *vargp) {
   }
 
   if (request_header.command == COMMAND_RETREIVE) {
+    handle_retreive_request(connfd, request_header, requestBodyBuffer);
   }
 
   close(connfd);
