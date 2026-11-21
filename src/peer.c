@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <bits/pthreadtypes.h>
 #include <math.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -24,6 +25,7 @@
 // Global variables to be used by both the server and client side of the peer.
 Address_t *my_address;
 NetworkRecord_t networkRecord;
+pthread_mutex_t print_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void print_address(Address_t *a) {
   char signature[SHA256_HASH_SIZE];
@@ -57,10 +59,10 @@ int addressExistsInNetwork(Address_t *pa) {
   return 0;
 }
 
-void storePeer(Address_t *pa) {
+int storePeer(Address_t *pa) {
   if (addressExistsInNetwork(pa)) {
     printf("%s:%d was not added as it already existed.\n", pa->ip, pa->port);
-    return;
+    return 0;
   }
   // Increasing network array size
   if (networkRecord.max_size == networkRecord.peer_count) {
@@ -69,7 +71,7 @@ void storePeer(Address_t *pa) {
 
     if (!new_network) {
       printf("failed to malloc new_network\n");
-      return;
+      return -1;
     }
 
     memcpy(new_network, networkRecord.network,
@@ -85,6 +87,7 @@ void storePeer(Address_t *pa) {
 
   // update "peer_count"
   networkRecord.peer_count += 1;
+  return 1;
 }
 /*
  * Send a request message to another peer on the network. Unless this is
@@ -139,7 +142,8 @@ void send_message(Address_t peer_address, int command, char *request_body,
     return;
   }
 
-  if (reply_header.status != STATUS_OK) {
+  if (reply_header.status != STATUS_OK &&
+      reply_header.status != STATUS_PEER_EXISTS) {
     printf("error! received status: %d\n", reply_header.status);
     return;
   }
@@ -185,8 +189,6 @@ void send_message(Address_t peer_address, int command, char *request_body,
   //     printf("wrong total hash. disregarding.\n");
   //     return;
   // }
-
-  printf("reply length: %d\n", reply_header.length);
 
   if (command == COMMAND_REGISTER) {
     int newPeersCount = reply_header.length / PEER_ADDR_LEN;
@@ -272,6 +274,31 @@ void *client_thread() {
 
   return NULL;
 }
+void send_reply(uint32_t connfd, uint32_t status, char *response_body,
+                int response_length) {
+  if (REPLY_HEADER_LEN + response_length > MAX_MSG_LEN) {
+    printf("tried constructing reply above max msq len\n");
+  }
+  // Construct a reply_header header
+  char msg_buf[MAX_MSG_LEN];
+  ReplyHeader_t reply_header;
+  reply_header.length = htonl(response_length);
+  reply_header.status = htonl(status);
+  // TODO: be able to send multiple blocks
+  reply_header.this_block = htonl(1);
+  reply_header.block_count = htonl(1);
+  // TODO: calculate total block_hash
+  get_data_sha(response_body, reply_header.block_hash, response_length,
+               SHA256_HASH_SIZE);
+  get_data_sha(response_body, reply_header.total_hash, response_length,
+               SHA256_HASH_SIZE);
+
+  // Copy the header and body together to the message buffer, then write to
+  // the socket
+  memcpy(msg_buf, &reply_header, REPLY_HEADER_LEN);
+  memcpy(msg_buf + REPLY_HEADER_LEN, response_body, response_length);
+  compsys_helper_writen(connfd, msg_buf, REPLY_HEADER_LEN + response_length);
+}
 
 void populate_network_address(Address_t *na, char *ip, uint32_t port,
                               hashdata_t signature) {
@@ -282,40 +309,43 @@ void populate_network_address(Address_t *na, char *ip, uint32_t port,
   get_signature((char *)signature, SHA256_HASH_SIZE, na->salt, &na->signature);
 }
 
-void handle_register_request(RequestHeader_t rh) {
+void handle_register_request(RequestHeader_t rh, int connfd) {
   // Constructing connecting client address:
   Address_t client_address;
   populate_network_address(&client_address, rh.ip, rh.port, rh.signature);
-  print_address(&client_address);
 
   pthread_mutex_lock(&networkRecord.mutex);
-  storePeer(&client_address);
+  int res = storePeer(&client_address);
   print_network_record();
-  pthread_mutex_unlock(&networkRecord.mutex);
-  // Storing myself in the network array with a network salt.
-  // TODO: currently we generate the same salt in both cases, because generator
-  // uses current time as seed
-  if (networkRecord.peer_count == 1) {
-    Address_t own_network_address;
-    populate_network_address(&own_network_address, my_address->ip,
-                             my_address->port, my_address->signature);
-    pthread_mutex_lock(&networkRecord.mutex);
-    storePeer(&own_network_address);
-    print_network_record();
-    pthread_mutex_unlock(&networkRecord.mutex);
+  if (res == -1) {
+    return;
   }
+  // Currently first peer can connect to themselves
+  // Storing myself in the network array with a network salt.
+  // if (networkRecord.peer_count == 1) {
+  //  Address_t own_network_address;
+  //  populate_network_address(&own_network_address, my_address->ip,
+  //                           my_address->port, my_address->signature);
+  //  storePeer(&own_network_address);
+  //  print_network_record();
+  //}
+  // Writing the body of the buffer
   char responseBodyBuffer[sizeof(Address_t) * networkRecord.peer_count];
   for (uint32_t i = 0; i < networkRecord.peer_count; i++) {
     Address_t network_order_address;
-    strncpy(network_order_address.ip, networkRecord.network[i]->ip, IP_LEN);
-    network_order_address.port = htonl(networkRecord.network[i]->port);
-    memcpy(network_order_address.signature, networkRecord.network[i]->signature,
-           SHA256_HASH_SIZE);
-    memcpy(network_order_address.salt, networkRecord.network[i]->salt,
-           SALT_LEN);
+    memcpy(&network_order_address, networkRecord.network[i], sizeof(Address_t));
+    network_order_address.port = htonl(network_order_address.port);
     memcpy(responseBodyBuffer + sizeof(Address_t) * i, &network_order_address,
            sizeof(Address_t));
   }
+  if (res == 1) {
+    send_reply(connfd, STATUS_OK, responseBodyBuffer,
+               sizeof(Address_t) * networkRecord.peer_count);
+  } else if (res == 0) { // client already joined
+    send_reply(connfd, STATUS_PEER_EXISTS, responseBodyBuffer,
+               sizeof(Address_t) * networkRecord.peer_count);
+  }
+  pthread_mutex_unlock(&networkRecord.mutex);
 }
 
 /*
@@ -350,14 +380,17 @@ void *handle_server_request_thread(void *vargp) {
 
   if (is_valid_ip(request_header.ip) != 1) {
     printf("Not a valid IP: %s\n", request_header.ip);
+    return NULL;
   }
 
   if (is_valid_port(request_header.port) != 1) {
     printf("Not a valid port: %d\n", request_header.port);
+    return NULL;
   }
 
   if (request_header.command > 3) {
     printf("Not a valid command: %d\n", request_header.command);
+    return NULL;
   }
 
   char requestBodyBuffer[request_header.length];
@@ -367,7 +400,7 @@ void *handle_server_request_thread(void *vargp) {
          request_header.port);
 
   if (request_header.command == COMMAND_REGISTER) {
-    handle_register_request(request_header);
+    handle_register_request(request_header, connfd);
   }
 
   close(connfd);
