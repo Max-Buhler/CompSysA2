@@ -37,7 +37,7 @@ void print_address(Address_t *a) {
 }
 
 // calls need to be inside network mutex
-Address_t *retrive_random_peer() {
+Address_t *get_random_peer() {
   if (networkRecord.peer_count <= 1) {
     printf("Attempted to retrive peer, but it appears no one likes you :(");
     return NULL;
@@ -247,6 +247,12 @@ void send_message(Address_t peer_address, int command, char *request_body,
       // ignore if they already exist in "network"
     }
   }
+  // https://www.w3schools.com/c/c_files.php
+  if (command == COMMAND_RETREIVE) {
+    fp = fopen(request_body, "w");
+    fprintf(fp, "%s", responseBodyBuffer);
+    fclose(fp);
+  }
 
   close(peer_socket);
 }
@@ -295,16 +301,18 @@ void *client_thread() {
   pthread_mutex_unlock(&networkRecord.mutex);
 
   while (1) {
-    char file_name[MAX_FILE_LEN]; // common on most systems
+    char file_path[MAX_FILE_PATH_LEN]; // common on most systems
     fprintf(stdout, "Enter file to retrieve: ");
-    scanf("%255s", file_name);
+    scanf("%255s", file_path);
 
     // Clean up file name string as otherwise some extra chars can sneak in.
-    for (int i = strlen(file_name); i < MAX_FILE_LEN; i++) {
-      file_name[i] = '\0';
+    for (int i = strlen(file_path); i < MAX_FILE_PATH_LEN; i++) {
+      file_path[i] = '\0';
     }
 
-    printf("%s\n", file_name);
+    Address_t random_peer;
+    memcpy(&random_peer, get_random_peer(), sizeof(Address_t));
+    send_message(random_peer, COMMAND_RETREIVE, file_path, strlen(file_path));
   }
   // You should never see this printed in your finished implementation
   printf("Client thread done\n");
@@ -455,6 +463,7 @@ void *handle_server_request_thread(void *vargp) {
   request_header.command = ntohl(request_header.command);
   request_header.length = ntohl(request_header.length);
 
+  // Validation
   if (request_header.length > MAX_MSG_LEN - REPLY_HEADER_LEN) {
     printf("incomming request length greater than allowed\n");
     send_error(connfd, STATUS_BAD_REQUEST);
@@ -485,6 +494,7 @@ void *handle_server_request_thread(void *vargp) {
   printf("Received request from %s:%d to run command: %d\n", request_header.ip,
          request_header.port, request_header.command);
 
+  // Reacting to the command
   if (request_header.command == COMMAND_REGISTER) {
     handle_register_request(request_header, connfd);
   }
@@ -496,6 +506,9 @@ void *handle_server_request_thread(void *vargp) {
       return NULL;
     }
     handle_inform_request(requestBodyBuffer);
+  }
+
+  if (request_header.command == COMMAND_RETREIVE) {
   }
 
   close(connfd);

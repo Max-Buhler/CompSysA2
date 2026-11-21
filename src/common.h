@@ -40,7 +40,7 @@
 #define SALT_LEN 16
 #define PASSWORD_LEN 16
 
-#define MAX_FILE_LEN 256
+#define MAX_FILE_PATH_LEN 256
 
 // container for hasher
 typedef uint8_t hashdata_t[SHA256_HASH_SIZE];
