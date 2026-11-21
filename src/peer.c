@@ -1,8 +1,10 @@
 #include <arpa/inet.h>
 #include <math.h>
 #include <netdb.h>
+#include <netinet/in.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +17,7 @@
 #include <endian.h>
 #endif
 
+#include "./common.h"
 #include "./peer.h"
 
 // Global variables to be used by both the server and client side of the peer.
@@ -117,40 +120,32 @@ void send_message(Address_t peer_address, int command, char *request_body,
   3: Handing the response to the register message
   Rather than closing immediately we should probably handle a response.
   */
+  struct ReplyHeader reply_header;
+  compsys_helper_readn(peer_socket, &reply_header, REPLY_HEADER_LEN);
 
-  uint8_t reply_header[REPLY_HEADER_LEN];
-  compsys_helper_readn(peer_socket, reply_header, REPLY_HEADER_LEN);
-
-  uint32_t reply_length = ntohl(*(uint32_t *)&reply_header[0]);
-  uint32_t reply_status = ntohl(*(uint32_t *)&reply_header[4]);
+  reply_header.length = ntohl(reply_header.length);
+  reply_header.status = ntohl(reply_header.status);
+  reply_header.this_block = ntohl(reply_header.this_block);
+  reply_header.block_count = ntohl(reply_header.block_count);
 
   // guard rails (<0 is unneccessary, as its a uint (Max removed it))
-  if (reply_length > MAX_MSG_LEN - REPLY_HEADER_LEN) {
+  if (reply_header.length > MAX_MSG_LEN - REPLY_HEADER_LEN) {
     printf("incomming reply length greater than allowed\n");
     return;
   }
 
   // get total response
-  char *responseBodyBuffer = malloc(reply_length);
-  if (!responseBodyBuffer) {
-    printf("malloc of responseBodyBuffer failed\n");
-    return;
-  }
-
-  // load/read total response body
-  compsys_helper_readn(peer_socket, responseBodyBuffer, reply_length);
-
-  // save block hash (4+4+4+4=16)
-  hashdata_t receivedBlockHash;
-  memcpy(receivedBlockHash, &reply_header[16], SHA256_HASH_SIZE);
+  char responseBodyBuffer[reply_header.length];
+  compsys_helper_readn(peer_socket, responseBodyBuffer, reply_header.length);
 
   // recalculate block hash
   hashdata_t calculatedBlockHash;
-  get_data_sha(responseBodyBuffer, calculatedBlockHash, reply_length,
+  get_data_sha(responseBodyBuffer, calculatedBlockHash, reply_header.length,
                SHA256_HASH_SIZE);
 
   // throw error if mismatch
-  if (memcmp(receivedBlockHash, calculatedBlockHash, SHA256_HASH_SIZE) != 0) {
+  if (memcmp(reply_header.block_hash, calculatedBlockHash, SHA256_HASH_SIZE) !=
+      0) {
     // TODO: Maybe actually throw error?
     printf("wrong blockhash. disregarding.\n");
     return;
@@ -160,8 +155,7 @@ void send_message(Address_t peer_address, int command, char *request_body,
   // but we only can load one for now.
   // -> It was built on the idea, that the whole reply was the "total hash", but
   // that is wrong. So changes are necessary. save total hash (4+4+4+4+32=48)
-  hashdata_t sentTotalHash;
-  memcpy(sentTotalHash, &reply_header[48], SHA256_HASH_SIZE);
+  //
   // // recalculate total hash
   // char *totalResponse = malloc(REPLY_HEADER_LEN+reply_length); // todo: needs
   // to be freed somewhere if (!totalResponse) {
@@ -182,11 +176,11 @@ void send_message(Address_t peer_address, int command, char *request_body,
   //     return;
   // }
 
-  printf("reply length: %d\n", reply_length);
-  printf("reply status: %d\n", reply_status);
+  printf("reply length: %d\n", reply_header.length);
+  printf("reply status: %d\n", reply_header.status);
 
-  if (reply_status == 1) {
-    int newPeersCount = reply_length / PEER_ADDR_LEN;
+  if (reply_header.status == 1) {
+    int newPeersCount = reply_header.length / PEER_ADDR_LEN;
     printf("Incomming peers: %d\n", newPeersCount);
 
     // we could optimize this to O(n) instead of O(m*n), by checking all new
@@ -212,10 +206,7 @@ void send_message(Address_t peer_address, int command, char *request_body,
 
   printf("peer_count is %d\n", networkRecord.peer_count);
 
-  free(responseBodyBuffer); // this might not be the best place for this to be
-                            // freed.
   close(peer_socket);
-  printf("made it this far\n");
 }
 
 /*
@@ -279,13 +270,15 @@ void *handle_server_request_thread(void *vargp) {
   pthread_detach(pthread_self());
   free(vargp);
 
-  close(connfd);
-
   /*
   5: Reading Server Requests
   Here we should probable actually read in some input data.
   */
 
+  uint8_t request_header[REQUEST_HEADER_LEN];
+  compsys_helper_readn(connfd, request_header, REPLY_HEADER_LEN);
+
+  close(connfd);
   return NULL;
 }
 
@@ -317,6 +310,7 @@ void *server_thread() {
 
   while (1) {
     connfdp = malloc(sizeof(int));
+    // currently not storing client address
     *connfdp = accept(listenfd, NULL, NULL);
     pthread_create(&tid, NULL, handle_server_request_thread, connfdp);
   }
