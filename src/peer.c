@@ -1,5 +1,6 @@
 #include <arpa/inet.h>
 #include <bits/pthreadtypes.h>
+#include <cstdint>
 #include <math.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -34,6 +35,23 @@ void print_address(Address_t *a) {
   printf("\t%s:%d salt: %.*s signature: %.*s\n", a->ip, a->port, SALT_LEN,
          a->salt, SHA256_HASH_SIZE, signature);
 }
+
+// calls need to be inside network mutex
+Address_t *retrive_random_peer() {
+  if (networkRecord.peer_count <= 1) {
+    printf("Attempted to retrive peer, but it appears no one likes you :(");
+    return NULL;
+  }
+  while (1) {
+    uint32_t i = rand() % networkRecord.peer_count;
+    int is_it_me =
+        (memcmp(networkRecord.network[i], my_address, IP_LEN + PORT_LEN) == 0);
+    if (!is_it_me) {
+      return networkRecord.network[i];
+    }
+  }
+}
+// calls need to be inside network mutex
 void print_network_record() {
   printf("--------------------------\n");
   printf("Printing Network Record:\n");
@@ -48,6 +66,7 @@ void print_network_record() {
  * checks if an address already exists in the network
  * only compares ip:port
  */
+// calls need to be inside network mutex
 int addressExistsInNetwork(Address_t *pa) {
   for (uint j = 0; j < networkRecord.peer_count; j++) {
     int sameIp = memcmp(networkRecord.network[j]->ip, pa->ip, IP_LEN) == 0;
@@ -60,6 +79,7 @@ int addressExistsInNetwork(Address_t *pa) {
   return 0;
 }
 
+// calls need to be inside network mutex
 int storePeer(Address_t *pa) {
   if (addressExistsInNetwork(pa)) {
     printf("%s:%d was not added as it already existed.\n", pa->ip, pa->port);
@@ -274,6 +294,18 @@ void *client_thread() {
   print_network_record();
   pthread_mutex_unlock(&networkRecord.mutex);
 
+  while (1) {
+    char file_name[MAX_FILE_LEN]; // common on most systems
+    fprintf(stdout, "Enter file to retrieve: ");
+    scanf("%255s", file_name);
+
+    // Clean up file name string as otherwise some extra chars can sneak in.
+    for (int i = strlen(file_name); i < MAX_FILE_LEN; i++) {
+      file_name[i] = '\0';
+    }
+
+    printf("%s\n", file_name);
+  }
   // You should never see this printed in your finished implementation
   printf("Client thread done\n");
 
@@ -383,10 +415,24 @@ void handle_inform_request(char *body) {
   joiner.port = ntohl(joiner.port);
 
   pthread_mutex_lock(&networkRecord.mutex);
-  print_network_record();
   storePeer(&joiner);
   print_network_record();
   pthread_mutex_unlock(&networkRecord.mutex);
+}
+
+void send_error(int connfd, int status) {
+  char msg_buf[MAX_MSG_LEN];
+
+  ReplyHeader_t reply_header;
+  reply_header.length = htonl(0);
+  reply_header.status = htonl(status);
+  reply_header.this_block = htonl(1);
+  reply_header.block_count = htonl(1);
+  get_data_sha(NULL, reply_header.block_hash, 0, SHA256_HASH_SIZE);
+  get_data_sha(NULL, reply_header.total_hash, 0, SHA256_HASH_SIZE);
+
+  memcpy(msg_buf, &reply_header, REPLY_HEADER_LEN);
+  compsys_helper_writen(connfd, msg_buf, REPLY_HEADER_LEN);
 }
 
 void *handle_server_request_thread(void *vargp) {
@@ -411,21 +457,25 @@ void *handle_server_request_thread(void *vargp) {
 
   if (request_header.length > MAX_MSG_LEN - REPLY_HEADER_LEN) {
     printf("incomming request length greater than allowed\n");
+    send_error(connfd, STATUS_BAD_REQUEST);
     return NULL;
   }
 
   if (is_valid_ip(request_header.ip) != 1) {
     printf("Not a valid IP: %s\n", request_header.ip);
+    send_error(connfd, STATUS_BAD_REQUEST);
     return NULL;
   }
 
   if (is_valid_port(request_header.port) != 1) {
     printf("Not a valid port: %d\n", request_header.port);
+    send_error(connfd, STATUS_BAD_REQUEST);
     return NULL;
   }
 
   if (request_header.command > 3) {
     printf("Not a valid command: %d\n", request_header.command);
+    send_error(connfd, STATUS_BAD_REQUEST);
     return NULL;
   }
 
