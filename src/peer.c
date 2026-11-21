@@ -19,20 +19,25 @@
 
 #include "./common.h"
 #include "./peer.h"
+#include "./sha256.h"
 
 // Global variables to be used by both the server and client side of the peer.
 Address_t *my_address;
 NetworkRecord_t networkRecord;
 
+void print_address(Address_t *a) {
+  char signature[SHA256_HASH_SIZE];
+  memcpy(signature, a->signature, SHA256_HASH_SIZE);
+  printf("\t%s:%d salt: %.*s signature: %.*s\n", a->ip, a->port, SALT_LEN,
+         a->salt, SHA256_HASH_SIZE, signature);
+}
 void print_network_record() {
   printf("--------------------------\n");
   printf("Printing Network Record:\n");
   printf("peers: %d\n", networkRecord.peer_count);
   printf("max size: %d\n", networkRecord.max_size);
   for (uint32_t i = 0; i < networkRecord.peer_count; i++) {
-    printf("\t%s:%d salt: %s signature: %s\n", networkRecord.network[i]->ip,
-           networkRecord.network[i]->port, networkRecord.network[i]->salt,
-           networkRecord.network[i]->signature);
+    print_address(networkRecord.network[i]);
   }
   printf("--------------------------\n");
 }
@@ -40,16 +45,16 @@ void print_network_record() {
  * checks if an address already exists in the network
  * only compares ip:port
  */
-bool addressExistsInNetwork(Address_t *pa) {
+int addressExistsInNetwork(Address_t *pa) {
   for (uint j = 0; j < networkRecord.peer_count; j++) {
-    bool sameIp = memcmp(networkRecord.network[j]->ip, pa->ip, IP_LEN);
-    bool samePort = networkRecord.network[j]->port == pa->port;
+    int sameIp = memcmp(networkRecord.network[j]->ip, pa->ip, IP_LEN) == 0;
+    int samePort = networkRecord.network[j]->port == pa->port;
 
     if (sameIp && samePort) {
-      return true;
+      return 1;
     }
   }
-  return false;
+  return 0;
 }
 
 void storePeer(Address_t *pa) {
@@ -273,7 +278,22 @@ void *client_thread() {
  * on the parsed command code
  */
 
-void handle_register_request() { return; }
+void handle_register_request(RequestHeader_t rh) {
+  // Constructing connecting client address:
+  Address_t client_address;
+  strncpy(client_address.ip, rh.ip, IP_LEN);
+  client_address.port = rh.port;
+  generate_random_salt(client_address.salt);
+  get_signature((char *)rh.signature, SHA256_HASH_SIZE, client_address.salt,
+                &client_address.signature);
+
+  printf("Recieved register request from:\n");
+  print_address(&client_address);
+  pthread_mutex_lock(&networkRecord.mutex);
+  storePeer(&client_address);
+  print_network_record();
+  pthread_mutex_unlock(&networkRecord.mutex);
+}
 
 void *handle_server_request_thread(void *vargp) {
   char buf[MAXLINE];
@@ -296,7 +316,7 @@ void *handle_server_request_thread(void *vargp) {
   request_header.length = ntohl(request_header.length);
 
   if (request_header.length > MAX_MSG_LEN - REPLY_HEADER_LEN) {
-    printf("incomming reply length greater than allowed\n");
+    printf("incomming request length greater than allowed\n");
     return NULL;
   }
 
@@ -317,6 +337,10 @@ void *handle_server_request_thread(void *vargp) {
 
   printf("Received request from %s:%d\n", request_header.ip,
          request_header.port);
+
+  if (request_header.command == COMMAND_REGISTER) {
+    handle_register_request(request_header);
+  }
 
   close(connfd);
   return NULL;
@@ -406,6 +430,8 @@ int main(int argc, char **argv) {
   */
   get_signature(password, strlen(password), user_salt,
                 (hashdata_t *)(my_address->signature));
+  printf("user salt: %.*s \nuser signature: %.*s\n", SALT_LEN, my_address->salt,
+         SHA256_HASH_SIZE, my_address->signature);
   // todo: maybe error handle if this fails? if it fails, it's likely because of
   // the malloc failing inside get_signature
 
