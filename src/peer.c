@@ -11,6 +11,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <time.h>
+#include <unistd.h>
 
 #ifdef __APPLE__
 #include "./endian.h"
@@ -123,6 +124,12 @@ void send_message(Address_t peer_address, int command, char *request_body,
   memcpy(msg_buf, &request_header, REQUEST_HEADER_LEN);
   memcpy(msg_buf + REQUEST_HEADER_LEN, request_body, body_length);
   compsys_helper_writen(peer_socket, msg_buf, REQUEST_HEADER_LEN + body_length);
+
+  // return early as we don't expect an answer
+  if (command == COMMAND_INFORM) {
+    close(peer_socket);
+    return;
+  }
 
   /*
   3: Handing the response to the register message
@@ -309,6 +316,21 @@ void populate_network_address(Address_t *na, char *ip, uint32_t port,
   get_signature((char *)signature, SHA256_HASH_SIZE, na->salt, &na->signature);
 }
 
+void inform_network(Address_t joiner) {
+  for (uint32_t i = 0; i < networkRecord.peer_count; i++) {
+    if (networkRecord.network[i]->signature != my_address->signature &&
+        networkRecord.network[i]->signature != joiner.signature) {
+
+      char body[sizeof(Address_t)];
+      memcpy(body, &joiner, sizeof(Address_t));
+      Address_t recipient;
+      memcpy(&recipient, networkRecord.network[i], sizeof(Address_t));
+
+      send_message(recipient, COMMAND_INFORM, body, sizeof(Address_t));
+    }
+  }
+}
+
 void handle_register_request(RequestHeader_t rh, int connfd) {
   // Constructing connecting client address:
   Address_t client_address;
@@ -320,15 +342,6 @@ void handle_register_request(RequestHeader_t rh, int connfd) {
   if (res == -1) {
     return;
   }
-  // Currently first peer can connect to themselves
-  // Storing myself in the network array with a network salt.
-  // if (networkRecord.peer_count == 1) {
-  //  Address_t own_network_address;
-  //  populate_network_address(&own_network_address, my_address->ip,
-  //                           my_address->port, my_address->signature);
-  //  storePeer(&own_network_address);
-  //  print_network_record();
-  //}
   // Writing the body of the buffer
   char responseBodyBuffer[sizeof(Address_t) * networkRecord.peer_count];
   for (uint32_t i = 0; i < networkRecord.peer_count; i++) {
@@ -341,6 +354,13 @@ void handle_register_request(RequestHeader_t rh, int connfd) {
   if (res == 1) {
     send_reply(connfd, STATUS_OK, responseBodyBuffer,
                sizeof(Address_t) * networkRecord.peer_count);
+
+    // inform network of joiner
+    Address_t no_client_address;
+    memcpy(&no_client_address, &client_address, sizeof(Address_t));
+    no_client_address.port = htonl(no_client_address.port);
+    inform_network(no_client_address);
+
   } else if (res == 0) { // client already joined
     send_reply(connfd, STATUS_PEER_EXISTS, responseBodyBuffer,
                sizeof(Address_t) * networkRecord.peer_count);
