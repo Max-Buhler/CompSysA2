@@ -54,9 +54,26 @@ void add_processing_files(char *file_name, uint file_name_length) {
   processingFiles.current_size++;
 }
 
-void remove_file_name(char *file_name) { return; }
+void remove_file_name(char *file_name) {
+  for (uint i = 0; i < processingFiles.current_size; i++) {
+    if (strcmp(file_name, processingFiles.file_names[i]) == 0) {
+      free(processingFiles.file_names[i]);
+      for (uint j = i + 1; j < processingFiles.current_size; j++) {
+        processingFiles.file_names[j - 1] = processingFiles.file_names[j];
+      }
+    }
+  }
+}
 
-int is_file_being_processed(char *file_name) { return 0; }
+int is_file_being_processed(char *file_name) {
+  for (uint i = 0; i < processingFiles.current_size; i++) {
+    if (strcmp(file_name, processingFiles.file_names[i]) == 0) {
+      return 1;
+    }
+  }
+
+  return 0;
+}
 
 // calls need to be inside network mutex
 void print_address(Address_t *a) {
