@@ -2,7 +2,10 @@
 GCC=gcc -g -Wall -Wextra -pedantic -std=gnu11
 LD_FLAGS= -lpthread -lm
 
-all: peer
+all: peer peer1/peer
+
+peer1/peer: peer
+	cp peer peer1/peer
 
 rebuild: clean all
 
@@ -25,4 +28,4 @@ zip: ../../src.zip
 	cd ../.. && zip -r handout/src.zip handout/src/Makefile handout/src/*.c handout/src/*.h handout/python/*.py handout/python/*/*.py
 
 clean:
-	rm -rf *.o peer sha256 vgcore* *.dSYM
+	rm -rf *.o peer peer1/peer sha256 vgcore* *.dSYM

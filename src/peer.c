@@ -171,63 +171,76 @@ void send_message(Address_t peer_address, int command, char *request_body,
   reply_header.this_block = ntohl(reply_header.this_block);
   reply_header.block_count = ntohl(reply_header.block_count);
 
+  printf("receiving response from retrieve.\n");
+  printf("block_count is %d\n", reply_header.block_count);
+  printf("total hash is %.*s\n", SHA256_HASH_SIZE, reply_header.total_hash);
+
   // guard rails (<0 is unneccessary, as its a uint (Max removed it))
   if (reply_header.length > MAX_MSG_LEN - REPLY_HEADER_LEN) {
     printf("incomming reply length greater than allowed: %u\n",
            reply_header.length);
+    close(peer_socket);
     return;
   }
 
   if (reply_header.status != STATUS_OK &&
       reply_header.status != STATUS_PEER_EXISTS) {
     printf("error! received status: %d\n", reply_header.status);
+    close(peer_socket);
     return;
   }
-
+  
   // get total response
-  char responseBodyBuffer[reply_header.length];
-  compsys_helper_readn(peer_socket, responseBodyBuffer, reply_header.length);
+  char responseBodyBuffer[reply_header.block_count * (MAX_MSG_LEN - REPLY_HEADER_LEN) + 1];
+  int totalLength=0;
 
-  // recalculate block hash
-  hashdata_t calculatedBlockHash;
-  get_data_sha(responseBodyBuffer, calculatedBlockHash, reply_header.length,
-               SHA256_HASH_SIZE);
+  for (int i = 0; i < reply_header.block_count; i++) {
+    if (i > 0) {
+      compsys_helper_readn(peer_socket, &reply_header, REPLY_HEADER_LEN);
+      reply_header.length = ntohl(reply_header.length);
+      reply_header.status = ntohl(reply_header.status);
+      reply_header.this_block = ntohl(reply_header.this_block);
+      reply_header.block_count = ntohl(reply_header.block_count);
+    }
+    totalLength += reply_header.length;
+
+    printf("successfully read block (%d / %d). Block size is %d. Total length is: %d\n", reply_header.this_block, reply_header.block_count-1, reply_header.length, totalLength);
+  
+    // get response block
+    char BlockBodyBuffer[reply_header.length];
+    compsys_helper_readn(peer_socket, BlockBodyBuffer, reply_header.length);
+    
+    // copy data to total response
+    memcpy(responseBodyBuffer + reply_header.this_block * MAX_MSG_LEN, BlockBodyBuffer, reply_header.length);
+
+    // recalculate block hash
+    hashdata_t calculatedBlockHash;
+    get_data_sha(BlockBodyBuffer, calculatedBlockHash, reply_header.length, SHA256_HASH_SIZE);
+
+    // throw error if mismatch
+    if (memcmp(reply_header.block_hash, calculatedBlockHash, SHA256_HASH_SIZE) != 0) {
+      // TODO: Maybe actually throw error?
+      printf("wrong blockhash. disregarding.\n");
+      close(peer_socket);
+      return;
+    }
+  }
+
+  hashdata_t calculatedTotalHash;
+  get_data_sha(responseBodyBuffer, calculatedTotalHash, totalLength, SHA256_HASH_SIZE);
+  
+  printf("calculated hash is %.*s\n", SHA256_HASH_SIZE, calculatedTotalHash);
 
   // throw error if mismatch
-  if (memcmp(reply_header.block_hash, calculatedBlockHash, SHA256_HASH_SIZE) !=
-      0) {
-    // TODO: Maybe actually throw error?
-    printf("wrong blockhash. disregarding.\n");
-    return;
+  if (memcmp(reply_header.total_hash, calculatedTotalHash, SHA256_HASH_SIZE) != 0) {
+      // TODO: Maybe actually throw error?
+      printf("wrong total hash. disregarding.\n");
+      // close(peer_socket);
+      // return;
   }
 
-  // TODO: Baseline to calculate total hash, as it is the hash of all blocks,
-  // but we only can load one for now.
-  // -> It was built on the idea, that the whole reply was the "total hash", but
-  // that is wrong. So changes are necessary. save total hash (4+4+4+4+32=48)
-  //
-  // // recalculate total hash
-  // char *totalResponse = malloc(REPLY_HEADER_LEN+reply_length); // todo: needs
-  // to be freed somewhere if (!totalResponse) {
-  //     return;
-  // }
-  // memcpy(totalResponse, reply_header, REPLY_HEADER_LEN); //first write
-  // response header memcpy(&totalResponse[REPLY_HEADER_LEN],
-  // responseBodyBuffer, reply_length); //then write response body
-
-  // hashdata_t calculatedTotalHash;
-  // get_data_sha(totalResponse, calculatedTotalHash,
-  // reply_length+REPLY_HEADER_LEN, SHA256_HASH_SIZE);
-
-  // // throw error if mismatch
-  // if (memcmp(sentTotalHash, calculatedTotalHash, SHA256_HASH_SIZE) != 0) {
-  //     // TODO: Maybe actually throw error?
-  //     printf("wrong total hash. disregarding.\n");
-  //     return;
-  // }
-
   if (command == COMMAND_REGISTER) {
-    int newPeersCount = reply_header.length / PEER_ADDR_LEN;
+    int newPeersCount = totalLength / PEER_ADDR_LEN;
     printf("Incomming peers: %d\n", newPeersCount);
 
     // we could optimize this to O(n) instead of O(m*n), by checking all new
@@ -256,6 +269,9 @@ void send_message(Address_t peer_address, int command, char *request_body,
   }
   // https://www.w3schools.com/c/c_files.php
   if (command == COMMAND_RETREIVE) {
+    // zero-indexed, so final byte is just null byte. this is for printing the files primarily.
+    responseBodyBuffer[totalLength] = '\0';
+
     fp = fopen(request_body, "w");
     if (!fp) {
       printf("Error creating file: %s", request_body);
@@ -268,7 +284,7 @@ void send_message(Address_t peer_address, int command, char *request_body,
       return;
     }
     printf("Successfully received %s with length %d", request_body,
-           reply_header.length);
+           totalLength);
     fclose(fp);
   }
 
@@ -341,11 +357,14 @@ void *client_thread() {
 }
 void send_reply(uint32_t connfd, uint32_t status, char *response_body,
                 int responseBodyLength) {
+  printf("data to be sent: %d\n", responseBodyLength);
   int maxBlockSize = (MAX_MSG_LEN - REPLY_HEADER_LEN);
-  int blockCount = fmax(ceil(responseBodyLength / maxBlockSize), 1);
+  int blockCount = fmax(ceil((double)responseBodyLength / (double)maxBlockSize), 1);
 
   hashdata_t totalHash; 
   get_data_sha(response_body, totalHash, responseBodyLength, SHA256_HASH_SIZE);
+  printf("total hash is %.*s\n", SHA256_HASH_SIZE, totalHash);
+  printf("block_count is %d\n", blockCount);
   for (int i = 0; i < blockCount; i++) {
     // Construct a reply_header header
     char msg_buf[MAX_MSG_LEN];
@@ -353,9 +372,11 @@ void send_reply(uint32_t connfd, uint32_t status, char *response_body,
     int replyLength = (i < blockCount-1) ? maxBlockSize : responseBodyLength % maxBlockSize;
     reply_header.length = htonl(replyLength);
     reply_header.status = htonl(status);
-    
+
     reply_header.this_block = htonl(i);
     reply_header.block_count = htonl(blockCount);
+    
+    printf("sending block (%d / %d). Block size is %d.\n", i, blockCount-1, replyLength);
     
     get_data_sha(response_body+i*maxBlockSize, reply_header.block_hash, replyLength, SHA256_HASH_SIZE);
     memcpy(reply_header.total_hash, &totalHash, SHA256_HASH_SIZE);
