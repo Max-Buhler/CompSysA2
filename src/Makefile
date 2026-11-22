@@ -25,4 +25,4 @@ zip: ../../src.zip
 	cd ../.. && zip -r handout/src.zip handout/src/Makefile handout/src/*.c handout/src/*.h handout/python/*.py handout/python/*/*.py
 
 clean:
-	rm -rf *.o peer sha256 vgcore*
+	rm -rf *.o peer sha256 vgcore* *.dSYM
