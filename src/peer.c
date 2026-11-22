@@ -282,7 +282,7 @@ void send_message(Address_t peer_address, int command, char *request_body,
       close(peer_socket);
       return;
     }
-    printf("Successfully received %s with length %d", request_body, totalLength-1);
+    printf("Successfully received %s with length %d\n", request_body, totalLength-1);
   }
 
   close(peer_socket);
