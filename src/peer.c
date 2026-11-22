@@ -340,28 +340,33 @@ void *client_thread() {
   return NULL;
 }
 void send_reply(uint32_t connfd, uint32_t status, char *response_body,
-                int response_length) {
-  for (uint i = 0; i < response_length; i += (MAX_MSG_LEN - REPLY_HEADER_LEN)) {
-  }
-  // Construct a reply_header header
-  char msg_buf[MAX_MSG_LEN];
-  ReplyHeader_t reply_header;
-  reply_header.length = htonl(response_length);
-  reply_header.status = htonl(status);
-  // TODO: be able to send multiple blocks
-  reply_header.this_block = htonl(1);
-  reply_header.block_count = htonl(1);
-  // TODO: calculate total block_hash
-  get_data_sha(response_body, reply_header.block_hash, response_length,
-               SHA256_HASH_SIZE);
-  get_data_sha(response_body, reply_header.total_hash, response_length,
-               SHA256_HASH_SIZE);
+                int responseBodyLength) {
+  int maxBlockSize = (MAX_MSG_LEN - REPLY_HEADER_LEN);
+  int blockCount = fmax(ceil(responseBodyLength / maxBlockSize), 1);
 
-  // Copy the header and body together to the message buffer, then write to
-  // the socket
-  memcpy(msg_buf, &reply_header, REPLY_HEADER_LEN);
-  memcpy(msg_buf + REPLY_HEADER_LEN, response_body, response_length);
-  compsys_helper_writen(connfd, msg_buf, REPLY_HEADER_LEN + response_length);
+  hashdata_t totalHash; 
+  get_data_sha(response_body, totalHash, responseBodyLength, SHA256_HASH_SIZE);
+  for (int i = 0; i < blockCount; i++) {
+    // Construct a reply_header header
+    char msg_buf[MAX_MSG_LEN];
+    ReplyHeader_t reply_header;
+    int replyLength = (i < blockCount-1) ? maxBlockSize : responseBodyLength % maxBlockSize;
+    reply_header.length = htonl(replyLength);
+    reply_header.status = htonl(status);
+    
+    reply_header.this_block = htonl(i);
+    reply_header.block_count = htonl(blockCount);
+    
+    get_data_sha(response_body+i*maxBlockSize, reply_header.block_hash, replyLength, SHA256_HASH_SIZE);
+    memcpy(reply_header.total_hash, &totalHash, SHA256_HASH_SIZE);
+
+    // Copy the header and body together to the message buffer, then write to
+    // the socket
+    memcpy(msg_buf, &reply_header, REPLY_HEADER_LEN);
+    memcpy(msg_buf + REPLY_HEADER_LEN, response_body+i*maxBlockSize, replyLength);
+    compsys_helper_writen(connfd, msg_buf, REPLY_HEADER_LEN + replyLength);
+  }
+  
 }
 
 void populate_network_address(Address_t *na, char *ip, uint32_t port,
@@ -467,19 +472,22 @@ void handle_retreive_request(int connfd, RequestHeader_t request_header,
     body = body + 1;
     request_header.length--;
   }
-  printf("file to retreive: %s\n", body);
+  char fileName[request_header.length+1];
+  memcpy(fileName, body, request_header.length);
+  fileName[request_header.length] = '\0';
+  printf("file to retreive: %s\n", fileName);
   // could use rb mode, however r is best for text files
   // https://stackoverflow.com/questions/2174889/whats-the-differences-between-r-and-rb-in-fopen
-  fp = fopen(body, "r");
+  fp = fopen(fileName, "r");
   if (!fp) {
-    printf("could not find file: %s\n", body);
+    printf("could not find file: %s\n", fileName);
     send_error(connfd, STATUS_BAD_REQUEST);
     return;
   }
   // find out file size
   if (fseek(fp, 0L, SEEK_END) != 0) {
 
-    printf("issues seeking file: %s", body);
+    printf("issues seeking file: %s", fileName);
     send_error(connfd, STATUS_BAD_REQUEST);
     fclose(fp);
     return;
@@ -488,7 +496,7 @@ void handle_retreive_request(int connfd, RequestHeader_t request_header,
   printf("file size: %d\n", file_size);
   // Go back to start of file
   if (fseek(fp, 0L, SEEK_SET) != 0) {
-    printf("issues returning to file start: %s", body);
+    printf("issues returning to file start: %s", fileName);
     send_error(connfd, STATUS_BAD_REQUEST);
     fclose(fp);
     return;
@@ -499,7 +507,7 @@ void handle_retreive_request(int connfd, RequestHeader_t request_header,
   char responseBodyBuffer[sizeof(char) * (file_size + 1)];
   size_t newLen = fread(responseBodyBuffer, sizeof(char), file_size, fp);
   if (ferror(fp) != 0) {
-    printf("issues reading file: %s\n", body);
+    printf("issues reading file: %s\n", fileName);
     send_error(connfd, STATUS_BAD_REQUEST);
     fclose(fp);
   } else {
