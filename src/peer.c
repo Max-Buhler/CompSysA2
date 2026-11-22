@@ -14,7 +14,6 @@
 #include <unistd.h>
 
 #ifdef __APPLE__
-#include "./endian.h"
 #else
 #include <endian.h>
 #endif
