@@ -306,8 +306,10 @@ void send_message(Address_t peer_address, int command, char *request_body,
   }
   // https://www.w3schools.com/c/c_files.php
   if (command == COMMAND_RETREIVE) {
-    // zero-indexed, so final byte is just null byte. this is for printing the
-    // files primarily.
+
+    // TODO: processingFiles - LOCK MUTEX. THEN CHECK IF ALREADY IS BEING WRITTEN TO AND ADD WRITE ON PATH.
+
+    // zero-indexed, so final byte is just null byte. this is for printing the files primarily.
     responseBodyBuffer[totalLength] = '\0';
 
     fp = fopen(request_body, "w");
@@ -318,6 +320,7 @@ void send_message(Address_t peer_address, int command, char *request_body,
     }
     int bytes_written = fprintf(fp, "%s", responseBodyBuffer);
     fclose(fp);
+    // TODO: processingFiles - UNLOCK MUTEX
     // last byte is NULL-byte so that won't be written anyways.
     if (bytes_written < totalLength - 1) {
       printf("Error writing file: %s, wrote %d / %d bytes", request_body,
@@ -539,6 +542,7 @@ void handle_retreive_request(int connfd, RequestHeader_t request_header,
   printf("file to retreive: %s\n", fileName);
   // could use rb mode, however r is best for text files
   // https://stackoverflow.com/questions/2174889/whats-the-differences-between-r-and-rb-in-fopen
+  // TODO: processingFiles - CHECK IF FILE IS BEING PROCESSED HERE, IF IT ISN'T LOCK MUTEX
   fp = fopen(fileName, "r");
   if (!fp) {
     printf("could not find file: %s\n", fileName);
@@ -575,6 +579,7 @@ void handle_retreive_request(int connfd, RequestHeader_t request_header,
     responseBodyBuffer[newLen++] = '\0'; /* Just to be safe. */
   }
   fclose(fp);
+  // TODO: processingFiles - UNLOCK MUTEX
 
   // sending reply
   send_reply(connfd, STATUS_OK, responseBodyBuffer,
