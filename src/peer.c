@@ -27,7 +27,7 @@ Address_t *my_address;
 NetworkRecord_t networkRecord;
 ProcessingFiles_t processingFiles;
 
-void add_processing_files(char *file_name, uint file_name_length) {
+void add_processing_files(char *file_name) {
 
   if (processingFiles.max_size == processingFiles.current_size) {
     char **new_file_names =
@@ -45,7 +45,8 @@ void add_processing_files(char *file_name, uint file_name_length) {
     processingFiles.file_names = new_file_names;
   }
 
-  char *fptr = malloc(sizeof(char) * file_name_length);
+  char *fptr = malloc(sizeof(char) * strlen(file_name));
+  strcpy(fptr, file_name);
   if (!fptr) {
     printf("failed to malloc the file name\n");
     return;
@@ -54,7 +55,7 @@ void add_processing_files(char *file_name, uint file_name_length) {
   processingFiles.current_size++;
 }
 
-void remove_file_name(char *file_name) {
+void remove_processing_file(char *file_name) {
   for (uint i = 0; i < processingFiles.current_size; i++) {
     if (strcmp(file_name, processingFiles.file_names[i]) == 0) {
       free(processingFiles.file_names[i]);
@@ -150,8 +151,6 @@ int storePeer(Address_t *pa) {
     free(networkRecord.network);
     networkRecord.network = new_network;
   }
-  // TODO: decreasing size
-  //
   // add to "network"
   Address_t *network_entry = malloc(sizeof(Address_t));
   if (!network_entry) {
@@ -241,7 +240,7 @@ void send_message(Address_t peer_address, int command, char *request_body,
                           1];
   int totalLength = 0;
 
-  for (int i = 0; i < reply_header.block_count; i++) {
+  for (uint i = 0; i < reply_header.block_count; i++) {
     if (i > 0) {
       compsys_helper_readn(peer_socket, &reply_header, REPLY_HEADER_LEN);
       reply_header.length = ntohl(reply_header.length);
@@ -273,7 +272,6 @@ void send_message(Address_t peer_address, int command, char *request_body,
     // throw error if mismatch
     if (memcmp(reply_header.block_hash, calculatedBlockHash,
                SHA256_HASH_SIZE) != 0) {
-      // TODO: Maybe actually throw error?
       printf("wrong blockhash. disregarding.\n");
       close(peer_socket);
       return;
@@ -287,7 +285,6 @@ void send_message(Address_t peer_address, int command, char *request_body,
   // throw error if mismatch
   if (memcmp(reply_header.total_hash, calculatedTotalHash, SHA256_HASH_SIZE) !=
       0) {
-    // TODO: Maybe actually throw error?
     printf("wrong total hash. disregarding.\n");
     close(peer_socket);
     return;
@@ -324,28 +321,40 @@ void send_message(Address_t peer_address, int command, char *request_body,
   // https://www.w3schools.com/c/c_files.php
   if (command == COMMAND_RETREIVE) {
 
-    // TODO: processingFiles - LOCK MUTEX. THEN CHECK IF ALREADY IS BEING WRITTEN TO AND ADD WRITE ON PATH.
+    // save copy of file name and make sure it is terminated
+    char file_name[body_length + 1];
+    memcpy(file_name, request_body, body_length);
+    file_name[body_length] = '\0';
 
-    // zero-indexed, so final byte is just null byte. this is for printing the files primarily.
+    pthread_mutex_lock(&processingFiles.mutex);
+    if (!is_file_being_processed(file_name)) {
+      add_processing_files(file_name);
+    }
+    pthread_mutex_unlock(&processingFiles.mutex);
+    // zero-indexed, so final byte is just null byte. this is for printing the
+    // files primarily.
     responseBodyBuffer[totalLength] = '\0';
 
     fp = fopen(request_body, "w");
     if (!fp) {
-      printf("Error creating file: %s", request_body);
+      printf("Error creating file: %s", file_name);
       close(peer_socket);
       return;
     }
     int bytes_written = fprintf(fp, "%s", responseBodyBuffer);
     fclose(fp);
-    // TODO: processingFiles - UNLOCK MUTEX
-    // last byte is NULL-byte so that won't be written anyways.
+
+    pthread_mutex_lock(&processingFiles.mutex);
+    remove_processing_file(file_name);
+    pthread_mutex_unlock(&processingFiles.mutex);
+
     if (bytes_written < totalLength - 1) {
-      printf("Error writing file: %s, wrote %d / %d bytes", request_body,
+      printf("Error writing file: %s, wrote %d / %d bytes", file_name,
              bytes_written, totalLength - 1);
       close(peer_socket);
       return;
     }
-    printf("Successfully received %s with length %d\n", request_body,
+    printf("Successfully received %s with length %d\n", file_name,
            totalLength - 1);
   }
 
@@ -557,9 +566,17 @@ void handle_retreive_request(int connfd, RequestHeader_t request_header,
   memcpy(fileName, body, request_header.length);
   fileName[request_header.length] = '\0';
   printf("file to retreive: %s\n", fileName);
+
+  pthread_mutex_lock(&processingFiles.mutex);
+  if (is_file_being_processed(fileName)) {
+    printf("could not find file: %s\n", fileName);
+    send_error(connfd, STATUS_BAD_REQUEST);
+    return;
+  }
+  pthread_mutex_unlock(&processingFiles.mutex);
+  //
   // could use rb mode, however r is best for text files
   // https://stackoverflow.com/questions/2174889/whats-the-differences-between-r-and-rb-in-fopen
-  // TODO: processingFiles - CHECK IF FILE IS BEING PROCESSED HERE, IF IT ISN'T LOCK MUTEX
   fp = fopen(fileName, "r");
   if (!fp) {
     printf("could not find file: %s\n", fileName);
