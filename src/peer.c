@@ -27,6 +27,37 @@ Address_t *my_address;
 NetworkRecord_t networkRecord;
 ProcessingFiles_t processingFiles;
 
+void add_processing_files(char *file_name, uint file_name_length) {
+
+  if (processingFiles.max_size == processingFiles.current_size) {
+    char **new_file_names =
+        malloc(sizeof(char *) * processingFiles.max_size * 2);
+
+    if (!new_file_names) {
+      printf("failed to malloc new_file_names\n");
+      return;
+    }
+
+    memcpy(new_file_names, processingFiles.file_names,
+           sizeof(char *) * processingFiles.max_size);
+    processingFiles.max_size *= 2;
+    free(processingFiles.file_names);
+    processingFiles.file_names = new_file_names;
+  }
+
+  char *fptr = malloc(sizeof(char) * file_name_length);
+  if (!fptr) {
+    printf("failed to malloc the file name\n");
+    return;
+  }
+  processingFiles.file_names[processingFiles.current_size] = fptr;
+  processingFiles.current_size++;
+}
+
+void remove_file_name(char *file_name) { return; }
+
+int is_file_being_processed(char *file_name) { return 0; }
+
 // calls need to be inside network mutex
 void print_address(Address_t *a) {
   char signature[SHA256_HASH_SIZE];
