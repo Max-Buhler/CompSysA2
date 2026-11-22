@@ -319,7 +319,9 @@ void *client_thread() {
 
     Address_t random_peer;
     memcpy(&random_peer, get_random_peer(), sizeof(Address_t));
-    send_message(random_peer, COMMAND_RETREIVE, file_path, strlen(file_path));
+    // +1 to include terminator
+    send_message(random_peer, COMMAND_RETREIVE, file_path,
+                 strlen(file_path) + 1);
   }
   // You should never see this printed in your finished implementation
   printf("Client thread done\n");
@@ -448,10 +450,56 @@ void send_error(int connfd, int status) {
 
 void handle_retreive_request(int connfd, RequestHeader_t request_header,
                              char *body) {
-  printf("file to retreive: %.*s\n", request_header.length, body);
-  if (body[0] == '/') {
-    printf("Received file request with leading \'/\'\n");
+
+  FILE *fp;
+  // Remove leading '/'
+  while (body[0] == '/') {
+    body = body + 1;
+    request_header.length--;
   }
+  printf("file to retreive: %s\n", body);
+  // could use rb mode, however r is best for text files
+  // https://stackoverflow.com/questions/2174889/whats-the-differences-between-r-and-rb-in-fopen
+  fp = fopen(body, "r");
+  if (!fp) {
+    printf("could not find file: %s\n", body);
+    send_error(connfd, STATUS_BAD_REQUEST);
+    return;
+  }
+  // find out file size
+  if (fseek(fp, 0L, SEEK_END) != 0) {
+
+    printf("issues seeking file: %s", body);
+    send_error(connfd, STATUS_BAD_REQUEST);
+    fclose(fp);
+    return;
+  }
+  int file_size = ftell(fp);
+  printf("file size: %d\n", file_size);
+  // Go back to start of file
+  if (fseek(fp, 0L, SEEK_SET) != 0) {
+    printf("issues returning to file start: %s", body);
+    send_error(connfd, STATUS_BAD_REQUEST);
+    fclose(fp);
+    return;
+  }
+  // reading file
+  // https://stackoverflow.com/questions/2029103/correct-way-to-read-a-text-file-into-a-buffer-in-c
+  // TODO: handle file_size > MAX_MSG_LEN
+  char responseBodyBuffer[sizeof(char) * (file_size + 1)];
+  size_t newLen = fread(responseBodyBuffer, sizeof(char), file_size, fp);
+  if (ferror(fp) != 0) {
+    printf("issues reading file: %s\n", body);
+    send_error(connfd, STATUS_BAD_REQUEST);
+    fclose(fp);
+  } else {
+    responseBodyBuffer[newLen++] = '\0'; /* Just to be safe. */
+  }
+  fclose(fp);
+
+  // sending reply
+  send_reply(connfd, STATUS_OK, responseBodyBuffer,
+             sizeof(char) * (file_size + 1));
 }
 
 void *handle_server_request_thread(void *vargp) {
