@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -52,6 +53,7 @@ Address_t *get_random_peer() {
     }
   }
 }
+
 // calls need to be inside network mutex
 void print_network_record() {
   printf("--------------------------\n");
@@ -68,21 +70,21 @@ void print_network_record() {
  * only compares ip:port
  */
 // calls need to be inside network mutex
-int addressExistsInNetwork(Address_t *pa) {
-  for (uint j = 0; j < networkRecord.peer_count; j++) {
-    int sameIp = memcmp(networkRecord.network[j]->ip, pa->ip, IP_LEN) == 0;
-    int samePort = networkRecord.network[j]->port == pa->port;
+Address_t *get_peer(Address_t *pa) {
+  for (uint i = 0; i < networkRecord.peer_count; i++) {
+    int sameIp = memcmp(networkRecord.network[i]->ip, pa->ip, IP_LEN) == 0;
+    int samePort = networkRecord.network[i]->port == pa->port;
 
     if (sameIp && samePort) {
-      return 1;
+      return networkRecord.network[i];
     }
   }
-  return 0;
+  return NULL;
 }
 
 // calls need to be inside network mutex
 int storePeer(Address_t *pa) {
-  if (addressExistsInNetwork(pa)) {
+  if (get_peer(pa)) {
     printf("%s:%d was not added as it already existed.\n", pa->ip, pa->port);
     return STATUS_PEER_EXISTS;
   }
@@ -340,8 +342,7 @@ void *client_thread() {
 }
 void send_reply(uint32_t connfd, uint32_t status, char *response_body,
                 int response_length) {
-  if (REPLY_HEADER_LEN + response_length > MAX_MSG_LEN) {
-    printf("tried constructing reply above max msq len\n");
+  for (uint i = 0; i < response_length; i += (MAX_MSG_LEN - REPLY_HEADER_LEN)) {
   }
   // Construct a reply_header header
   char msg_buf[MAX_MSG_LEN];
@@ -512,6 +513,34 @@ void handle_retreive_request(int connfd, RequestHeader_t request_header,
              sizeof(char) * (file_size + 1));
 }
 
+int verify_signature(RequestHeader_t request_header) {
+  hashdata_t calculated_hash;
+  Address_t hr_peer;
+  memcpy(&hr_peer, &request_header.ip, IP_LEN);
+  hr_peer.port = request_header.port;
+
+  pthread_mutex_lock(&networkRecord.mutex);
+  Address_t *nr_peer = get_peer(&hr_peer);
+  if (!nr_peer) {
+    printf("could not verify signature: peer %s:%d not in network", hr_peer.ip,
+           hr_peer.port);
+    return 0;
+  }
+  Address_t nrcpy_peer;
+  memcpy(&nrcpy_peer, nr_peer, sizeof(Address_t));
+  pthread_mutex_unlock(&networkRecord.mutex);
+
+  get_signature((char *)request_header.signature, SHA256_HASH_SIZE,
+                nrcpy_peer.salt, &calculated_hash);
+  if (memcmp(&calculated_hash, &request_header.signature, SHA256_HASH_SIZE) ==
+      0) {
+    printf("could not verify signature: peer %s:%d has invalid signature",
+           hr_peer.ip, hr_peer.port);
+    return 0;
+  }
+  return 1;
+}
+
 void *handle_server_request_thread(void *vargp) {
   int connfd = *((int *)vargp);
   pthread_detach(pthread_self());
@@ -533,18 +562,21 @@ void *handle_server_request_thread(void *vargp) {
   if (request_header.length > MAX_MSG_LEN - REPLY_HEADER_LEN) {
     printf("incomming request length greater than allowed\n");
     send_error(connfd, STATUS_BAD_REQUEST);
+    close(connfd);
     return NULL;
   }
 
   if (is_valid_ip(request_header.ip) != 1) {
     printf("Not a valid IP: %s\n", request_header.ip);
     send_error(connfd, STATUS_BAD_REQUEST);
+    close(connfd);
     return NULL;
   }
 
   if (is_valid_port(request_header.port) != 1) {
     printf("Not a valid port: %d\n", request_header.port);
     send_error(connfd, STATUS_BAD_REQUEST);
+    close(connfd);
     return NULL;
   }
 
@@ -552,6 +584,7 @@ void *handle_server_request_thread(void *vargp) {
   if (request_header.command > 3 || request_header.command == 0) {
     printf("Not a valid command: %d\n", request_header.command);
     send_error(connfd, STATUS_BAD_REQUEST);
+    close(connfd);
     return NULL;
   }
 
@@ -564,6 +597,12 @@ void *handle_server_request_thread(void *vargp) {
   // Reacting to the command
   if (request_header.command == COMMAND_REGISTER) {
     handle_register_request(request_header, connfd);
+  }
+
+  // Verify user signature
+  if (!verify_signature(request_header)) {
+    close(connfd);
+    return NULL;
   }
 
   if (request_header.command == COMMAND_INFORM) {
