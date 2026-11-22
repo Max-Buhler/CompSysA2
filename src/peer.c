@@ -26,8 +26,10 @@
 // Global variables to be used by both the server and client side of the peer.
 Address_t *my_address;
 NetworkRecord_t networkRecord;
+// Isn't used at the time
 pthread_mutex_t print_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+// calls need to be inside network mutex
 void print_address(Address_t *a) {
   char signature[SHA256_HASH_SIZE];
   memcpy(signature, a->signature, SHA256_HASH_SIZE);
@@ -38,7 +40,8 @@ void print_address(Address_t *a) {
 // calls need to be inside network mutex
 Address_t *get_random_peer() {
   if (networkRecord.peer_count <= 1) {
-    printf("Attempted to retrive peer, but it appears no one likes you :(");
+    printf("Tried to retrieve random peer, however network size is: %d\n",
+           networkRecord.peer_count);
     return NULL;
   }
   while (1) {
@@ -82,7 +85,7 @@ int addressExistsInNetwork(Address_t *pa) {
 int storePeer(Address_t *pa) {
   if (addressExistsInNetwork(pa)) {
     printf("%s:%d was not added as it already existed.\n", pa->ip, pa->port);
-    return 0;
+    return STATUS_PEER_EXISTS;
   }
   // Increasing network array size
   if (networkRecord.max_size == networkRecord.peer_count) {
@@ -91,7 +94,7 @@ int storePeer(Address_t *pa) {
 
     if (!new_network) {
       printf("failed to malloc new_network\n");
-      return -1;
+      return STATUS_OTHER;
     }
 
     memcpy(new_network, networkRecord.network,
@@ -104,12 +107,16 @@ int storePeer(Address_t *pa) {
   //
   // add to "network"
   Address_t *network_entry = malloc(sizeof(Address_t));
+  if (!network_entry) {
+    printf("failed to malloc network_entry\n");
+    return STATUS_OTHER;
+  }
   memcpy(network_entry, pa, sizeof(Address_t));
   networkRecord.network[networkRecord.peer_count] = network_entry;
 
   // update "peer_count"
   networkRecord.peer_count += 1;
-  return 1;
+  return STATUS_OK;
 }
 /*
  * Send a request message to another peer on the network. Unless this is
@@ -384,9 +391,9 @@ void handle_register_request(RequestHeader_t rh, int connfd) {
   populate_network_address(&client_address, rh.ip, rh.port, rh.signature);
 
   pthread_mutex_lock(&networkRecord.mutex);
-  int res = storePeer(&client_address);
+  int response_status = storePeer(&client_address);
   print_network_record();
-  if (res == -1) {
+  if (response_status != STATUS_OK && response_status != STATUS_PEER_EXISTS) {
     return;
   }
   // Writing the body of the buffer
@@ -398,17 +405,13 @@ void handle_register_request(RequestHeader_t rh, int connfd) {
     memcpy(responseBodyBuffer + sizeof(Address_t) * i, &network_order_address,
            sizeof(Address_t));
   }
-  if (res == 1) {
-    send_reply(connfd, STATUS_OK, responseBodyBuffer,
-               sizeof(Address_t) * networkRecord.peer_count);
-
+  send_reply(connfd, response_status, responseBodyBuffer,
+             sizeof(Address_t) * networkRecord.peer_count);
+  if (response_status == STATUS_OK) {
     // inform network of joiner
     inform_network(client_address);
-
-  } else if (res == 0) { // client already joined
-    send_reply(connfd, STATUS_PEER_EXISTS, responseBodyBuffer,
-               sizeof(Address_t) * networkRecord.peer_count);
   }
+
   pthread_mutex_unlock(&networkRecord.mutex);
 }
 
@@ -447,7 +450,7 @@ void handle_retreive_request(int connfd, RequestHeader_t request_header,
                              char *body) {
   printf("file to retreive: %.*s\n", request_header.length, body);
   if (body[0] == '/') {
-    printf("haha i got you hackerman\n");
+    printf("Received file request with leading \'/\'\n");
   }
 }
 
@@ -487,7 +490,8 @@ void *handle_server_request_thread(void *vargp) {
     return NULL;
   }
 
-  if (request_header.command > 3) {
+  // command is uint
+  if (request_header.command > 3 || request_header.command == 0) {
     printf("Not a valid command: %d\n", request_header.command);
     send_error(connfd, STATUS_BAD_REQUEST);
     return NULL;

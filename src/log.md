@@ -27,6 +27,8 @@
 - fixed bug, where we used network byte ordering to index a memcpy
 - Encapsulated memory allocation into the storePeer function
 - Completed Step 8 + 9
+- Completed Step 10 + 11
+- Completed Step 12
 
 ## Memory Allocations
 
