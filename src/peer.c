@@ -25,8 +25,7 @@
 // Global variables to be used by both the server and client side of the peer.
 Address_t *my_address;
 NetworkRecord_t networkRecord;
-// Isn't used at the time
-pthread_mutex_t print_mutex = PTHREAD_MUTEX_INITIALIZER;
+ProcessingFiles_t processingFiles;
 
 // calls need to be inside network mutex
 void print_address(Address_t *a) {
@@ -187,10 +186,12 @@ void send_message(Address_t peer_address, int command, char *request_body,
     close(peer_socket);
     return;
   }
-  
+
   // get total response
-  char responseBodyBuffer[reply_header.block_count * (MAX_MSG_LEN - REPLY_HEADER_LEN) + 1];
-  int totalLength=0;
+  char responseBodyBuffer[reply_header.block_count *
+                              (MAX_MSG_LEN - REPLY_HEADER_LEN) +
+                          1];
+  int totalLength = 0;
 
   for (int i = 0; i < reply_header.block_count; i++) {
     if (i > 0) {
@@ -202,21 +203,28 @@ void send_message(Address_t peer_address, int command, char *request_body,
     }
     totalLength += reply_header.length;
 
-    printf("successfully read block (%d / %d). Block size is %d. Total length is: %d\n", reply_header.this_block, reply_header.block_count-1, reply_header.length, totalLength);
+    printf("successfully read block (%d / %d). Block size is %d. Total length "
+           "is: %d\n",
+           reply_header.this_block, reply_header.block_count - 1,
+           reply_header.length, totalLength);
 
     // get response block
     char BlockBodyBuffer[reply_header.length];
     compsys_helper_readn(peer_socket, BlockBodyBuffer, reply_header.length);
 
     // copy data to total response
-    memcpy(responseBodyBuffer + reply_header.this_block * (MAX_MSG_LEN-REPLY_HEADER_LEN), BlockBodyBuffer, reply_header.length);
+    memcpy(responseBodyBuffer +
+               reply_header.this_block * (MAX_MSG_LEN - REPLY_HEADER_LEN),
+           BlockBodyBuffer, reply_header.length);
 
     // recalculate block hash
     hashdata_t calculatedBlockHash;
-    get_data_sha(BlockBodyBuffer, calculatedBlockHash, reply_header.length, SHA256_HASH_SIZE);
+    get_data_sha(BlockBodyBuffer, calculatedBlockHash, reply_header.length,
+                 SHA256_HASH_SIZE);
 
     // throw error if mismatch
-    if (memcmp(reply_header.block_hash, calculatedBlockHash, SHA256_HASH_SIZE) != 0) {
+    if (memcmp(reply_header.block_hash, calculatedBlockHash,
+               SHA256_HASH_SIZE) != 0) {
       // TODO: Maybe actually throw error?
       printf("wrong blockhash. disregarding.\n");
       close(peer_socket);
@@ -225,14 +233,16 @@ void send_message(Address_t peer_address, int command, char *request_body,
   }
 
   hashdata_t calculatedTotalHash;
-  get_data_sha(responseBodyBuffer, calculatedTotalHash, totalLength, SHA256_HASH_SIZE);
+  get_data_sha(responseBodyBuffer, calculatedTotalHash, totalLength,
+               SHA256_HASH_SIZE);
 
   // throw error if mismatch
-  if (memcmp(reply_header.total_hash, calculatedTotalHash, SHA256_HASH_SIZE) != 0) {
-      // TODO: Maybe actually throw error?
-      printf("wrong total hash. disregarding.\n");
-      close(peer_socket);
-      return;
+  if (memcmp(reply_header.total_hash, calculatedTotalHash, SHA256_HASH_SIZE) !=
+      0) {
+    // TODO: Maybe actually throw error?
+    printf("wrong total hash. disregarding.\n");
+    close(peer_socket);
+    return;
   }
 
   if (command == COMMAND_REGISTER) {
@@ -265,7 +275,8 @@ void send_message(Address_t peer_address, int command, char *request_body,
   }
   // https://www.w3schools.com/c/c_files.php
   if (command == COMMAND_RETREIVE) {
-    // zero-indexed, so final byte is just null byte. this is for printing the files primarily.
+    // zero-indexed, so final byte is just null byte. this is for printing the
+    // files primarily.
     responseBodyBuffer[totalLength] = '\0';
 
     fp = fopen(request_body, "w");
@@ -277,12 +288,14 @@ void send_message(Address_t peer_address, int command, char *request_body,
     int bytes_written = fprintf(fp, "%s", responseBodyBuffer);
     fclose(fp);
     // last byte is NULL-byte so that won't be written anyways.
-    if (bytes_written < totalLength-1) {
-      printf("Error writing file: %s, wrote %d / %d bytes", request_body, bytes_written, totalLength-1);
+    if (bytes_written < totalLength - 1) {
+      printf("Error writing file: %s, wrote %d / %d bytes", request_body,
+             bytes_written, totalLength - 1);
       close(peer_socket);
       return;
     }
-    printf("Successfully received %s with length %d\n", request_body, totalLength-1);
+    printf("Successfully received %s with length %d\n", request_body,
+           totalLength - 1);
   }
 
   close(peer_socket);
@@ -356,9 +369,10 @@ void send_reply(uint32_t connfd, uint32_t status, char *response_body,
                 int responseBodyLength) {
   printf("data to be sent: %d\n", responseBodyLength);
   int maxBlockSize = (MAX_MSG_LEN - REPLY_HEADER_LEN);
-  int blockCount = fmax(ceil((double)responseBodyLength / (double)maxBlockSize), 1);
+  int blockCount =
+      fmax(ceil((double)responseBodyLength / (double)maxBlockSize), 1);
 
-  hashdata_t totalHash; 
+  hashdata_t totalHash;
   get_data_sha(response_body, totalHash, responseBodyLength, SHA256_HASH_SIZE);
   printf("block_count is %d\n", blockCount);
 
@@ -366,25 +380,28 @@ void send_reply(uint32_t connfd, uint32_t status, char *response_body,
     // Construct a reply_header header
     char msg_buf[MAX_MSG_LEN];
     ReplyHeader_t reply_header;
-    int replyLength = (i < blockCount-1) ? maxBlockSize : responseBodyLength % maxBlockSize;
+    int replyLength =
+        (i < blockCount - 1) ? maxBlockSize : responseBodyLength % maxBlockSize;
     reply_header.length = htonl(replyLength);
     reply_header.status = htonl(status);
 
     reply_header.this_block = htonl(i);
     reply_header.block_count = htonl(blockCount);
-    
-    printf("sending block (%d / %d). Block size is %d.\n", i, blockCount-1, replyLength);
 
-    get_data_sha(response_body+i*maxBlockSize, reply_header.block_hash, replyLength, SHA256_HASH_SIZE);
+    printf("sending block (%d / %d). Block size is %d.\n", i, blockCount - 1,
+           replyLength);
+
+    get_data_sha(response_body + i * maxBlockSize, reply_header.block_hash,
+                 replyLength, SHA256_HASH_SIZE);
     memcpy(reply_header.total_hash, &totalHash, SHA256_HASH_SIZE);
 
     // Copy the header and body together to the message buffer, then write to
     // the socket
     memcpy(msg_buf, &reply_header, REPLY_HEADER_LEN);
-    memcpy(msg_buf + REPLY_HEADER_LEN, response_body+i*maxBlockSize, replyLength);
+    memcpy(msg_buf + REPLY_HEADER_LEN, response_body + i * maxBlockSize,
+           replyLength);
     compsys_helper_writen(connfd, msg_buf, REPLY_HEADER_LEN + replyLength);
   }
-  
 }
 
 void populate_network_address(Address_t *na, char *ip, uint32_t port,
@@ -425,7 +442,6 @@ void handle_register_request(RequestHeader_t rh, int connfd) {
   Address_t client_address;
   populate_network_address(&client_address, rh.ip, rh.port, rh.signature);
 
-  pthread_mutex_lock(&networkRecord.mutex);
   int response_status = storePeer(&client_address);
   print_network_record();
   if (response_status != STATUS_OK && response_status != STATUS_PEER_EXISTS) {
@@ -446,8 +462,6 @@ void handle_register_request(RequestHeader_t rh, int connfd) {
     // inform network of joiner
     inform_network(client_address);
   }
-
-  pthread_mutex_unlock(&networkRecord.mutex);
 }
 
 /*
@@ -460,10 +474,8 @@ void handle_inform_request(char *body) {
   memcpy(&joiner, body, sizeof(Address_t));
   joiner.port = ntohl(joiner.port);
 
-  pthread_mutex_lock(&networkRecord.mutex);
   storePeer(&joiner);
   print_network_record();
-  pthread_mutex_unlock(&networkRecord.mutex);
 }
 
 void send_error(int connfd, int status) {
@@ -490,7 +502,7 @@ void handle_retreive_request(int connfd, RequestHeader_t request_header,
     body = body + 1;
     request_header.length--;
   }
-  char fileName[request_header.length+1];
+  char fileName[request_header.length + 1];
   memcpy(fileName, body, request_header.length);
   fileName[request_header.length] = '\0';
   printf("file to retreive: %s\n", fileName);
@@ -621,7 +633,9 @@ void *handle_server_request_thread(void *vargp) {
 
   // Reacting to the command
   if (request_header.command == COMMAND_REGISTER) {
+    pthread_mutex_lock(&networkRecord.mutex);
     handle_register_request(request_header, connfd);
+    pthread_mutex_unlock(&networkRecord.mutex);
   }
 
   // Verify user signature
@@ -636,7 +650,9 @@ void *handle_server_request_thread(void *vargp) {
              request_header.length);
       return NULL;
     }
+    pthread_mutex_lock(&networkRecord.mutex);
     handle_inform_request(requestBodyBuffer);
+    pthread_mutex_unlock(&networkRecord.mutex);
   }
 
   if (request_header.command == COMMAND_RETREIVE) {
@@ -741,8 +757,15 @@ int main(int argc, char **argv) {
   networkRecord.network = malloc(sizeof(Address_t *));
   networkRecord.peer_count = 0;
   networkRecord.max_size = 1;
-  pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-  networkRecord.mutex = mutex;
+  pthread_mutex_t nr_mutex = PTHREAD_MUTEX_INITIALIZER;
+  networkRecord.mutex = nr_mutex;
+
+  // Setting up struct to track files being processed
+  processingFiles.file_names = malloc(sizeof(char *));
+  processingFiles.max_size = 1;
+  processingFiles.current_size = 0;
+  pthread_mutex_t pf_mutex = PTHREAD_MUTEX_INITIALIZER;
+  processingFiles.mutex = pf_mutex;
 
   // Setup the client and server threads
   pthread_t client_thread_id;

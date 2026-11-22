@@ -3,6 +3,7 @@
 #include "common.h"
 #include "sha256.h"
 #include <pthread.h>
+#include <stdint.h>
 
 // container for file paths
 typedef struct FilePath {
@@ -42,6 +43,11 @@ typedef struct NetworkRecord {
   uint32_t max_size;
   uint32_t peer_count;
   pthread_mutex_t mutex;
-  // pthread_cond_t new_job;
-  // pthread_cond_t removed_job;
 } NetworkRecord_t;
+
+typedef struct ProcessingFiles {
+  char **file_names;
+  pthread_mutex_t mutex;
+  uint32_t current_size;
+  uint32_t max_size;
+} ProcessingFiles_t;
