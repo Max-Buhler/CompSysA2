@@ -24,18 +24,20 @@
 
 // Global variables to be used by both the server and client side of the peer.
 Address_t *my_address;
-NetworkRecord_t networkRecord;
-ProcessingFiles_t processingFiles;
+NetworkRecord_t networkRecord;     // all addresses in network signature
+ProcessingFiles_t processingFiles; // all files currently being processed
 
-void add_processing_files(char *file_name) {
+// calls need to be inside processing files mutex
+int add_processing_files(char *file_name) {
 
+  // grow file name array if needed
   if (processingFiles.max_size == processingFiles.current_size) {
     char **new_file_names =
         malloc(sizeof(char *) * processingFiles.max_size * 2);
 
     if (!new_file_names) {
       printf("failed to malloc new_file_names\n");
-      return;
+      return 0;
     }
 
     memcpy(new_file_names, processingFiles.file_names,
@@ -45,17 +47,21 @@ void add_processing_files(char *file_name) {
     processingFiles.file_names = new_file_names;
   }
 
+  // malloc new file name
   char *fptr = malloc(sizeof(char) * strlen(file_name));
   strcpy(fptr, file_name);
   if (!fptr) {
     printf("failed to malloc the file name\n");
-    return;
+    return 0;
   }
   processingFiles.file_names[processingFiles.current_size] = fptr;
   processingFiles.current_size++;
+  return 1;
 }
 
-void remove_processing_file(char *file_name) {
+// calls need to be inside processing files mutex
+int remove_processing_file(char *file_name) {
+  // find and free file name
   for (uint i = 0; i < processingFiles.current_size; i++) {
     if (strcmp(file_name, processingFiles.file_names[i]) == 0) {
       free(processingFiles.file_names[i]);
@@ -64,8 +70,27 @@ void remove_processing_file(char *file_name) {
       }
     }
   }
+  // shrink array if needed
+  if (processingFiles.max_size >= processingFiles.current_size * 4) {
+
+    char **new_file_names =
+        malloc(sizeof(char *) * processingFiles.current_size * 2);
+
+    if (!new_file_names) {
+      printf("failed to malloc new_file_names\n");
+      return 0;
+    }
+
+    memcpy(new_file_names, processingFiles.file_names,
+           sizeof(char *) * processingFiles.current_size * 2);
+    processingFiles.max_size = processingFiles.current_size * 2;
+    free(processingFiles.file_names);
+    processingFiles.file_names = new_file_names;
+  }
+  return 1;
 }
 
+// calls need to be inside processing files mutex
 int is_file_being_processed(char *file_name) {
   for (uint i = 0; i < processingFiles.current_size; i++) {
     if (strcmp(file_name, processingFiles.file_names[i]) == 0) {
@@ -328,7 +353,13 @@ void send_message(Address_t peer_address, int command, char *request_body,
 
     pthread_mutex_lock(&processingFiles.mutex);
     if (!is_file_being_processed(file_name)) {
-      add_processing_files(file_name);
+      if (!add_processing_files(file_name)) {
+        printf("was unable to store file: %s to currently processed files\n",
+               file_name);
+        close(peer_socket);
+        pthread_mutex_unlock(&processingFiles.mutex);
+        return;
+      }
     }
     pthread_mutex_unlock(&processingFiles.mutex);
     // zero-indexed, so final byte is just null byte. this is for printing the
@@ -768,6 +799,7 @@ void *server_thread() {
 
   // You should never see this printed in your finished implementation
   printf("Server thread done\n");
+  close(listenfd);
 
   return NULL;
 }
@@ -847,6 +879,19 @@ int main(int argc, char **argv) {
   // Wait for them to complete.
   pthread_join(client_thread_id, NULL);
   pthread_join(server_thread_id, NULL);
+
+  // free mallocs (we never reach this point, but it can't hurt)
+  for (uint i = 0; i < networkRecord.peer_count; i++) {
+    free(networkRecord.network[i]);
+  }
+  free(networkRecord.network);
+
+  for (uint i = 0; i < processingFiles.current_size; i++) {
+    free(processingFiles.file_names[i]);
+  }
+  free(processingFiles.file_names);
+
+  free(my_address);
 
   exit(EXIT_SUCCESS);
 }

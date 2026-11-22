@@ -33,9 +33,12 @@
 ## Memory Allocations
 
 - network[] + every address in network[]
+  - Needs to be freed in main
 - new_network
+- file_names[] + ever file name in file_names[]
+  - get freed on array shrink (maybe).
+  - array needs to be freed in main
 - connfd when accepting clients
+- my address
 
-## Open Sockets (Incompet)
-
--
+## Open Sockets (Incomplete)
