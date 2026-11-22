@@ -205,13 +205,18 @@ void send_message(Address_t peer_address, int command, char *request_body,
     totalLength += reply_header.length;
 
     printf("successfully read block (%d / %d). Block size is %d. Total length is: %d\n", reply_header.this_block, reply_header.block_count-1, reply_header.length, totalLength);
-  
+
     // get response block
     char BlockBodyBuffer[reply_header.length];
     compsys_helper_readn(peer_socket, BlockBodyBuffer, reply_header.length);
     
+    printf("last byte of block is: 0x%02X\n", BlockBodyBuffer[0]);
+    printf("last byte of block is: 0x%02X\n", BlockBodyBuffer[1]);
+    printf("last byte of block is: 0x%02X\n", BlockBodyBuffer[2]);
+    printf("last byte of block is: 0x%02X\n", BlockBodyBuffer[3]);
+
     // copy data to total response
-    memcpy(responseBodyBuffer + reply_header.this_block * MAX_MSG_LEN, BlockBodyBuffer, reply_header.length);
+    memcpy(responseBodyBuffer + reply_header.this_block * (MAX_MSG_LEN-REPLY_HEADER_LEN), BlockBodyBuffer, reply_header.length);
 
     // recalculate block hash
     hashdata_t calculatedBlockHash;
@@ -225,6 +230,14 @@ void send_message(Address_t peer_address, int command, char *request_body,
       return;
     }
   }
+
+  printf("responseBodyBuffer[8113] is: 0x%02X\n", responseBodyBuffer[8113]);
+  printf("responseBodyBuffer[8114] is: 0x%02X\n", responseBodyBuffer[8114]);
+  printf("responseBodyBuffer[8115] is: 0x%02X\n", responseBodyBuffer[8115]);
+  printf("responseBodyBuffer[8116] is: 0x%02X\n", responseBodyBuffer[8116]);
+  printf("responseBodyBuffer[8117] is: 0x%02X\n", responseBodyBuffer[8117]);
+  printf("responseBodyBuffer[8118] is: 0x%02X\n", responseBodyBuffer[8118]);
+  printf("responseBodyBuffer[8119] is: 0x%02X\n", responseBodyBuffer[8119]);
 
   hashdata_t calculatedTotalHash;
   get_data_sha(responseBodyBuffer, calculatedTotalHash, totalLength, SHA256_HASH_SIZE);
@@ -278,8 +291,9 @@ void send_message(Address_t peer_address, int command, char *request_body,
       close(peer_socket);
       return;
     }
-    if (fprintf(fp, "%s", responseBodyBuffer) < 0) {
-      printf("Error writing file: %s", request_body);
+    int bytes_written = fprintf(fp, "%s", responseBodyBuffer);
+    if (bytes_written < totalLength) {
+      printf("Error writing file: %s, wrote %d / %d bytes", request_body, bytes_written, totalLength);
       close(peer_socket);
       return;
     }
@@ -365,6 +379,16 @@ void send_reply(uint32_t connfd, uint32_t status, char *response_body,
   get_data_sha(response_body, totalHash, responseBodyLength, SHA256_HASH_SIZE);
   printf("total hash is %.*s\n", SHA256_HASH_SIZE, totalHash);
   printf("block_count is %d\n", blockCount);
+
+  printf("last byte of block is: 0x%02X\n", response_body[8113]);
+  printf("last byte of block is: 0x%02X\n", response_body[8114]);
+  printf("last byte of block is: 0x%02X\n", response_body[8115]);
+  printf("last byte of block is: 0x%02X\n", response_body[8116]);
+  printf("last byte of block is: 0x%02X\n", response_body[8117]);
+  printf("last byte of block is: 0x%02X\n", response_body[8118]);
+  printf("last byte of block is: 0x%02X\n", response_body[8119]);
+
+
   for (int i = 0; i < blockCount; i++) {
     // Construct a reply_header header
     char msg_buf[MAX_MSG_LEN];
@@ -377,7 +401,8 @@ void send_reply(uint32_t connfd, uint32_t status, char *response_body,
     reply_header.block_count = htonl(blockCount);
     
     printf("sending block (%d / %d). Block size is %d.\n", i, blockCount-1, replyLength);
-    
+    // printf("last byte of block is: 0x%02X\n", response_body[i*maxBlockSize+replyLength]);
+
     get_data_sha(response_body+i*maxBlockSize, reply_header.block_hash, replyLength, SHA256_HASH_SIZE);
     memcpy(reply_header.total_hash, &totalHash, SHA256_HASH_SIZE);
 
