@@ -257,7 +257,18 @@ void send_message(Address_t peer_address, int command, char *request_body,
   // https://www.w3schools.com/c/c_files.php
   if (command == COMMAND_RETREIVE) {
     fp = fopen(request_body, "w");
-    fprintf(fp, "%s", responseBodyBuffer);
+    if (!fp) {
+      printf("Error creating file: %s", request_body);
+      close(peer_socket);
+      return;
+    }
+    if (fprintf(fp, "%s", responseBodyBuffer) < 0) {
+      printf("Error writing file: %s", request_body);
+      close(peer_socket);
+      return;
+    }
+    printf("Successfully received %s with length %d", request_body,
+           reply_header.length);
     fclose(fp);
   }
 
