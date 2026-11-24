@@ -589,7 +589,7 @@ void handle_retreive_request(int connfd, RequestHeader_t request_header,
 
   FILE *fp;
   // Remove leading '/'
-  while (body[0] == '/') {
+  while (request_header.length > 0 && body[0] == '/') {
     body = body + 1;
     request_header.length--;
   }
@@ -597,6 +597,13 @@ void handle_retreive_request(int connfd, RequestHeader_t request_header,
   memcpy(fileName, body, request_header.length);
   fileName[request_header.length] = '\0';
   printf("file to retreive: %s\n", fileName);
+
+  // going upwards in the directory tree requires ".." somewhere in the path
+  if (strstr(fileName, "..") != NULL) {
+    printf("malicious request attempt for file: %s\n", fileName);
+    send_error(connfd, STATUS_BAD_REQUEST);
+    return;
+  }
 
   pthread_mutex_lock(&processingFiles.mutex);
   if (is_file_being_processed(fileName)) {
