@@ -602,6 +602,7 @@ void handle_retreive_request(int connfd, RequestHeader_t request_header,
   if (is_file_being_processed(fileName)) {
     printf("could not find file: %s\n", fileName);
     send_error(connfd, STATUS_BAD_REQUEST);
+    pthread_mutex_unlock(&processingFiles.mutex);
     return;
   }
   pthread_mutex_unlock(&processingFiles.mutex);
@@ -662,6 +663,7 @@ int verify_signature(RequestHeader_t request_header) {
   if (!nr_peer) {
     printf("could not verify signature: peer %s:%d not in network", hr_peer.ip,
            hr_peer.port);
+    pthread_mutex_unlock(&networkRecord.mutex);
     return 0;
   }
   Address_t nrcpy_peer;
