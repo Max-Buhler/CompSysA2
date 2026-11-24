@@ -672,8 +672,7 @@ int verify_signature(RequestHeader_t request_header) {
 
   get_signature((char *)request_header.signature, SHA256_HASH_SIZE,
                 nrcpy_peer.salt, &calculated_hash);
-  if (memcmp(&calculated_hash, &request_header.signature, SHA256_HASH_SIZE) ==
-      0) {
+  if (memcmp(&calculated_hash, &nrcpy_peer.signature, SHA256_HASH_SIZE) != 0) {
     printf("could not verify signature: peer %s:%d has invalid signature",
            hr_peer.ip, hr_peer.port);
     return 0;
